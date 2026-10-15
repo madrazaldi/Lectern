@@ -11,6 +11,7 @@
   import Login from '$lib/components/Login.svelte';
   import NowPlaying from '$lib/components/NowPlaying.svelte';
   import PlayerDock from '$lib/components/PlayerDock.svelte';
+  import ReauthBanner from '$lib/components/ReauthBanner.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toasts from '$lib/components/Toasts.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
@@ -237,6 +238,7 @@
   {/if}
 {/if}
 
+{#if session.status !== 'signed-out' && !session.addingAccount}<ReauthBanner />{/if}
 <Toasts />
 
 <style>
