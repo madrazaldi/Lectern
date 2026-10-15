@@ -64,6 +64,11 @@ describe('nextInSeries', () => {
     expect(nextInSeries(series, 'b', () => false)?.id).toBe('b5');
   });
 
+  it('skips ebook-only books, which have nothing to play', () => {
+    const ebookOnly = { ...book('b', '2'), mediaType: 'book', media: { duration: 0, numTracks: 0, numAudioFiles: 0 } } as unknown as LibraryItem;
+    expect(nextInSeries([book('a', '1'), ebookOnly, book('c', '3')], 'a', () => false)?.id).toBe('c');
+  });
+
   it('skips finished and missing books', () => {
     const missing = [...series.filter((b) => b.id !== 'b5'), book('b5', '2.5', { isMissing: true })];
     expect(nextInSeries(missing, 'b', (id) => id === 'c')?.id).toBe('x');

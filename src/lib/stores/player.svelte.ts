@@ -936,12 +936,19 @@ class Player {
     await this.startAudio().catch(() => {});
   }
 
-  /** After finishing: play the head of Up Next, or carry on with the series or podcast if allowed. */
+  /**
+   * After finishing: play the head of Up Next, or carry on with the series or podcast if allowed. An entry that
+   * won't start (gone from the server, nothing to listen to) is passed over for the next.
+   */
   private async advance() {
-    const head = this.queue[0];
-    if (head) {
+    while (this.queue[0]) {
+      const head = this.queue[0];
       this.removeFromQueue(0);
-      return this.play(head.itemId, head.episodeId);
+      const starting = this.play(head.itemId, head.episodeId);
+      const gen = this.playGen;
+      await starting;
+      // Started, or something else was picked meanwhile.
+      if (gen !== this.playGen || (this.isCurrent(head.itemId, head.episodeId) && this.ready)) return;
     }
     if (!prefs.autoContinue) return;
     const next = await this.findNext().catch(() => null);

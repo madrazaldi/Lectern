@@ -4,6 +4,7 @@
  */
 import type { LibraryItem, PodcastMetadata } from '$lib/api/types';
 import { isBook, isPodcast } from '$lib/api/types';
+import { hasAudio } from '$lib/components/reader/ebook';
 import { player } from '$lib/stores/player.svelte';
 import { session } from '$lib/stores/session.svelte';
 import { playOrToggle } from './play';
@@ -30,8 +31,8 @@ export class ItemView {
   progress = $derived(this.series ? undefined : session.progressFor(this.item.id, this.episodeId));
   current = $derived(!this.series && player.isCurrent(this.item.id, this.episodeId));
   playing = $derived(this.current && player.isPlaying);
-  /** A series has nothing to play directly; a podcast needs an episode. */
-  canPlay = $derived(!this.series && (!isPodcast(this.item) || !!this.episode) && !this.item.isMissing);
+  /** A series has nothing to play directly; a podcast needs an episode; an ebook-only book has no audio. */
+  canPlay = $derived(!this.series && (!isPodcast(this.item) || !!this.episode) && !this.item.isMissing && hasAudio(this.item));
   playLabel = $derived(this.playing ? `Pause ${this.title}` : `Play ${this.title}`);
 
   play = () => {

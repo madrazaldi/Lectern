@@ -6,6 +6,7 @@
   import type { PlaylistEntry } from '$lib/api/abs';
   import type { Collection, LibraryItem, Playlist } from '$lib/api/types';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import { hasAudio } from '$lib/components/reader/ebook';
   import ErrorState from '$lib/components/ErrorState.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
   import ItemRow from '$lib/components/ItemRow.svelte';
@@ -55,6 +56,8 @@
   });
   const view = $derived(res.data);
   const items = $derived(view?.items);
+  /** What Play all and Up Next can take: ebook-only books have nothing to play. */
+  const listenable = $derived((items ?? []).filter((i) => !i.isMissing && hasAudio(i)));
   const playlist = $derived(view?.playlist ?? null);
   const collection = $derived(view?.collection ?? null);
   const name = $derived(view?.name ?? '');
@@ -72,7 +75,7 @@
   });
 
   function entries() {
-    return (items ?? []).filter((i) => !i.isMissing).map((i) => queueEntry(i, i.recentEpisode ?? null));
+    return listenable.map((i) => queueEntry(i, i.recentEpisode ?? null));
   }
 
   function playAll() {
@@ -307,7 +310,7 @@
         {/if}
       {/if}
       <div class="actions">
-        {#if items.length}
+        {#if listenable.length}
           <button class="btn btn-primary" onclick={playAll}><Play size={16} fill="currentColor" strokeWidth={0} /> Play all</button>
           <button class="btn btn-quiet" onclick={queueAll}><ListEnd size={16} /> Add all to Up Next</button>
         {/if}

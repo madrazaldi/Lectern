@@ -1,4 +1,5 @@
 import type { Chapter, LibraryItem, PodcastEpisode } from '$lib/api/types';
+import { hasAudio } from '$lib/components/reader/ebook';
 
 /** Index of the chapter playing at `time` (binary search; clamps to the first/last chapter). */
 export function findChapter(chapters: Chapter[], time: number) {
@@ -38,7 +39,7 @@ export function nextInSeries(books: (LibraryItem & { sequence?: string })[], cur
   const sorted = [...books].sort((a, b) => sequenceNumber(a.sequence) - sequenceNumber(b.sequence));
   const at = sorted.findIndex((b) => b.id === currentId);
   if (at < 0) return null;
-  return sorted.slice(at + 1).find((b) => !isFinished(b.id) && !b.isMissing) ?? null;
+  return sorted.slice(at + 1).find((b) => !isFinished(b.id) && !b.isMissing && hasAudio(b)) ?? null;
 }
 
 /** The first unfinished episode published after `currentId`. */

@@ -8,6 +8,7 @@
   import ErrorState from '$lib/components/ErrorState.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
   import Loading from '$lib/components/Loading.svelte';
+  import { hasAudio } from '$lib/components/reader/ebook';
   import ReadMore from '$lib/components/ReadMore.svelte';
   import { live } from '$lib/stores/live.svelte';
   import { player } from '$lib/stores/player.svelte';
@@ -45,11 +46,13 @@
 
   const finished = $derived(books?.filter((b) => session.progressFor(b.id)?.isFinished).length ?? 0);
   const totalLength = $derived(books?.reduce((sum, b) => sum + (isBook(b) ? b.media.duration : 0), 0) ?? 0);
+  // Ebook-only books in the series have nothing to start.
+  const listenable = $derived(books?.filter((b) => hasAudio(b)));
   const next = $derived(
-    books?.find((b) => {
+    listenable?.find((b) => {
       const p = session.progressFor(b.id);
       return p && !p.isFinished && p.currentTime > 0;
-    }) ?? books?.find((b) => !session.progressFor(b.id)?.isFinished)
+    }) ?? listenable?.find((b) => !session.progressFor(b.id)?.isFinished)
   );
   const authors = $derived([...new Set(books?.map((b) => (isBook(b) ? b.media.metadata.authorName : '')).filter(Boolean))].join(', '));
 </script>

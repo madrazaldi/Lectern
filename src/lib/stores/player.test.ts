@@ -406,6 +406,22 @@ describe('sleep timer', () => {
   });
 });
 
+describe('Up Next', () => {
+  it('passes over an Up Next entry that will not start for the one after it', async () => {
+    await playLoaded();
+    api.startPlayback.mockImplementation(async (id: string) => {
+      if (id === 'b') throw new ApiError(500, 'No audio');
+      return playback(id);
+    });
+    player.enqueue({ itemId: 'b', episodeId: null, title: 'B', subtitle: '' });
+    player.enqueue({ itemId: 'c', episodeId: null, title: 'C', subtitle: '' });
+    active().dispatchEvent(new Event('ended'));
+    await vi.waitFor(() => expect(player.item?.id).toBe('c'));
+    expect(player.queue).toHaveLength(0);
+    expect(errorToasts()).toHaveLength(1);
+  });
+});
+
 describe('syncing', () => {
   it('sends the paused position even when a periodic sync is in flight', async () => {
     await playLoaded('a', 10);
