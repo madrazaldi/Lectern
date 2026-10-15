@@ -407,6 +407,8 @@ interface Raw {
   statusText: string;
   type: string;
   body: string;
+  /** A successful answer's body, for `bytes` requests. */
+  bytes?: ArrayBuffer;
 }
 
 const readRaw = async (res: Response): Promise<Raw> => ({
@@ -500,6 +502,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Milliseconds before giving up and treating the server as unreachable. */
   timeout?: number;
+  /** Resolve with the body as an ArrayBuffer (e.g. an ebook) instead of parsed JSON or text. */
+  bytes?: boolean;
 }
 
 export async function request<T>(path: string, opts: RequestOptions = {}, retried = false): Promise<T> {
@@ -527,6 +531,9 @@ export async function request<T>(path: string, opts: RequestOptions = {}, retrie
       },
       async (res) => {
         noteServerDate(res.headers.get('date'), sentAt);
+        if (opts.bytes && res.ok && !res.headers.get('content-type')?.includes('text/html')) {
+          return { status: res.status, statusText: res.statusText, type: res.headers.get('content-type') ?? '', body: '', bytes: await res.arrayBuffer() };
+        }
         return readRaw(res);
       }
     );
@@ -557,6 +564,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}, retrie
     throw new ApiError(401, 'Your session ended. Sign in again to continue.');
   }
   if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, raw.body || `${raw.status} ${raw.statusText}`);
+  if (raw.bytes) return raw.bytes as T;
   if (raw.type.includes('application/json')) {
     try {
       return JSON.parse(raw.body) as T;

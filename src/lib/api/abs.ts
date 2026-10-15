@@ -263,3 +263,13 @@ export const batchUpdateProgress = (updates: ProgressUpdate[]) =>
 
 /** Forget a title's progress entirely (by the progress record's own id). */
 export const deleteProgress = (progressId: string) => request<void>(`/api/me/progress/${progressId}`, { method: 'DELETE' });
+
+// --- reader ---
+
+/** An item's ebook file: its primary one, or another ebook in its folder by inode. Sent with the auth header, never a URL token. */
+export const getEbook = (itemId: string, fileIno?: string | null, signal?: AbortSignal) =>
+  request<ArrayBuffer>(`/api/items/${itemId}/ebook${fileIno ? `/${fileIno}` : ''}`, { bytes: true, signal, timeout: 120_000 });
+
+/** Save the reading position. Leaves listening progress (currentTime) alone. */
+export const updateEbookProgress = (itemId: string, ebookLocation: string, ebookProgress: number) =>
+  request<void>(`/api/me/progress/${itemId}`, { method: 'PATCH', body: { ebookLocation, ebookProgress } });

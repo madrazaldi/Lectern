@@ -441,3 +441,34 @@ export type RecentEpisode = ServerEpisode & {
   podcast: PodcastMedia & { libraryItemId: string };
   libraryId: string;
 };
+
+// --- reader ---
+
+/** Where the reader is in the item's ebook, kept on the same progress record as listening. */
+export interface MediaProgress {
+  /** An EPUB CFI, or a page number for PDFs (as the Audiobookshelf web reader stores it). */
+  ebookLocation?: string | null;
+  /** 0–1. */
+  ebookProgress?: number | null;
+}
+
+export type EbookFormat = 'epub' | 'pdf' | 'mobi' | 'azw3' | 'cbz' | 'cbr' | (string & {});
+
+export interface LibraryFile {
+  ino: string;
+  metadata: { filename: string; ext: string; path: string; relPath: string; size: number };
+  fileType: string;
+  /** For ebooks: false for the item's primary ebook, true for the other ones. */
+  isSupplementary?: boolean | null;
+  ebookFormat?: EbookFormat;
+}
+
+/** `media.ebookFile` on a book (expanded items; minified ones only carry `media.ebookFormat`). */
+export interface EbookFile extends LibraryFile {
+  ebookFormat: EbookFormat;
+}
+
+export interface LibraryItem {
+  /** Every file in the item's folder (expanded items only). */
+  libraryFiles?: LibraryFile[];
+}
