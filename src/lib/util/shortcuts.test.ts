@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { available, describeShortcuts, formatCombo, isMacPlatform, matchShortcut, navAllowed, SHORTCUTS, type KeyLike } from './shortcuts';
+import { available, describeShortcuts, formatCombo, isMacPlatform, matchShortcut, navAllowed, shortcutKeys, SHORTCUTS, type KeyLike } from './shortcuts';
 
 const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key: k, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods });
 const books = { books: true, desktop: true };
@@ -46,6 +46,14 @@ describe('shortcut registry', () => {
     expect(id(key('k', { metaKey: true }), { ...books, nativeMenu: true })).toBe('search');
   });
 
+  it('switches to the mini player with ⌘⇧M, leaving M alone for mute', () => {
+    expect(id(key('M', { metaKey: true, shiftKey: true }))).toBe('mini-player');
+    expect(id(key('M', { ctrlKey: true, shiftKey: true }))).toBe('mini-player');
+    expect(id(key('m'))).toBe('mute');
+    // The View menu has it on a Mac.
+    expect(id(key('M', { metaKey: true, shiftKey: true }), { ...books, nativeMenu: true })).toBeNull();
+  });
+
   it('has no Series, Authors or Collections in a podcast library', () => {
     const pods = { books: false, desktop: true };
     expect(id(key('3', { metaKey: true }), pods)).toBeNull();
@@ -69,6 +77,12 @@ describe('shortcut labels', () => {
     expect(formatCombo(c, false)).toBe('Ctrl+Shift+F');
     expect(formatCombo({ key: 'ArrowLeft', shift: true }, false)).toBe('Shift+←');
     expect(formatCombo({ key: ' ' }, true)).toBe('Space');
+  });
+
+  it("labels one shortcut's keys for a tooltip", () => {
+    expect(shortcutKeys('mini-player', true)).toBe('⌘⇧M');
+    expect(shortcutKeys('mini-player', false)).toBe('Ctrl+Shift+M');
+    expect(shortcutKeys('nope', true)).toBe('');
   });
 
   it('detects the platform', () => {
