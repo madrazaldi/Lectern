@@ -7,6 +7,7 @@
   import { CloudOff, LoaderCircle } from '@lucide/svelte';
   import { onMount, tick, untrack } from 'svelte';
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { initCredentials } from '$lib/api/client';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import Dialogs from '$lib/components/Dialogs.svelte';
@@ -153,10 +154,13 @@
         .then(() => perform(action, from));
     if (action.startsWith('nav:')) return navigate(action.slice(4));
     switch (action) {
-      case 'search':
+      case 'search': {
         player.expanded = false;
-        window.dispatchEvent(new CustomEvent('lectern:focus-search'));
-        return;
+        const focus = () => window.dispatchEvent(new CustomEvent('lectern:focus-search'));
+        // The reader covers the top bar's search box: search from the search page instead.
+        if (page.url.pathname.startsWith('/read/')) return void goto('/search').then(tick).then(focus);
+        return focus();
+      }
       case 'back':
         return history.back();
       case 'forward':
