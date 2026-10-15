@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { available, describeShortcuts, formatCombo, isMacPlatform, matchShortcut, navAllowed, shortcutKeys, SHORTCUTS, type KeyLike } from './shortcuts';
+import {
+  available,
+  claimKeys,
+  describeShortcuts,
+  formatCombo,
+  isMacPlatform,
+  matchShortcut,
+  navAllowed,
+  shortcutKeys,
+  SHORTCUTS,
+  type KeyLike
+} from './shortcuts';
 
 const key = (k: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key: k, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods });
 const books = { books: true, desktop: true };
@@ -98,5 +109,30 @@ describe('shortcut labels', () => {
     expect(faster.keys).toEqual(['>', '↑ in Now Playing']);
     expect(groups[1].rows.find((r) => r.id === 'search')!.keys).toContain('Ctrl+K');
     expect(groups[1].rows.some((r) => r.id === 'nav-downloads')).toBe(false);
+  });
+});
+
+describe('claimed keys', () => {
+  it('stand down while a page claims them, and come back on release', () => {
+    const release = claimKeys([' ', 'ArrowLeft', 'ArrowRight']);
+    expect(id(key(' '))).toBeNull();
+    expect(id(key('ArrowLeft'))).toBeNull();
+    expect(id(key('ArrowRight', { shiftKey: true }))).toBeNull();
+    // Other keys and ⌘ combos are unaffected.
+    expect(id(key('m'))).toBe('mute');
+    expect(id(key('k', { metaKey: true }))).toBe('search');
+    release();
+    expect(id(key(' '))).toBe('play-pause');
+    expect(id(key('ArrowLeft'))).toBe('skip-back');
+  });
+
+  it('keeps a key claimed until every claim on it is released', () => {
+    const a = claimKeys(['ArrowLeft']);
+    const b = claimKeys(['ArrowLeft']);
+    a();
+    expect(id(key('ArrowLeft'))).toBeNull();
+    b();
+    b();
+    expect(id(key('ArrowLeft'))).toBe('skip-back');
   });
 });
