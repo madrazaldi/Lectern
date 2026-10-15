@@ -106,7 +106,8 @@ const claims = new Set<ReadonlySet<string>>();
 
 /**
  * Take over unmodified keys while a page is open (the reader turns pages with ←/→ and Space): shortcuts on them
- * stand down, with or without Shift, until the returned function releases the claim. ⌘/Ctrl combos are never taken.
+ * stand down, with or without Shift, until the returned function releases the claim. ⌘/Ctrl combos are never taken,
+ * and nothing is while Now Playing covers the page.
  */
 export function claimKeys(keys: Iterable<string>): () => void {
   const claim = new Set(keys);
@@ -122,7 +123,8 @@ function claimed(e: KeyLike) {
 
 /** The shortcut a key press triggers, if any. */
 export function matchShortcut(e: KeyLike, ctx: ShortcutContext, list = SHORTCUTS): Shortcut | null {
-  if (claimed(e)) return null;
+  // Now Playing covers the page: the page isn't listening to its keys then.
+  if (!ctx.expanded && claimed(e)) return null;
   for (const s of available(ctx, list)) if (s.combos.some((c) => comboMatches(c, e, ctx))) return s;
   return null;
 }

@@ -126,6 +126,15 @@ describe('claimed keys', () => {
     expect(id(key('ArrowLeft'))).toBe('skip-back');
   });
 
+  it('are the player’s again while Now Playing covers the claiming page', () => {
+    const release = claimKeys([' ', 'ArrowLeft', 'ArrowRight']);
+    const expanded = { ...books, expanded: true };
+    expect(id(key(' '), expanded)).toBe('play-pause');
+    expect(id(key('ArrowLeft'), expanded)).toBe('skip-back');
+    expect(id(key(' '))).toBeNull();
+    release();
+  });
+
   it('keeps a key claimed until every claim on it is released', () => {
     const a = claimKeys(['ArrowLeft']);
     const b = claimKeys(['ArrowLeft']);
