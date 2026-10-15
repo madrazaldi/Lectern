@@ -1,16 +1,18 @@
 <script lang="ts">
-  import { Bookmark, Check, CircleCheck, EyeOff, LoaderCircle, Pause, Play, RotateCcw } from '@lucide/svelte';
+  import { Bookmark, Check, CircleCheck, EyeOff, ListEnd, ListX, LoaderCircle, Pause, Play, RotateCcw } from '@lucide/svelte';
   import { page } from '$app/state';
   import * as abs from '$lib/api/abs';
   import { coverUrl } from '$lib/api/client';
   import type { LibraryItem, PodcastEpisode, PodcastMetadata, SeriesRef } from '$lib/api/types';
   import { isBook, isPodcast } from '$lib/api/types';
+  import AddToPlaylist from '$lib/components/AddToPlaylist.svelte';
   import ChapterShelf from '$lib/components/ChapterShelf.svelte';
+  import DownloadButton from '$lib/components/DownloadButton.svelte';
   import Cover from '$lib/components/Cover.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Progress from '$lib/components/Progress.svelte';
+  import { downloads } from '$lib/stores/downloads.svelte';
   import { player } from '$lib/stores/player.svelte';
-  import { prefs } from '$lib/stores/prefs.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { errorMessage, toast } from '$lib/stores/toast.svelte';
   import { tintFor, type Tint } from '$lib/util/color';
@@ -37,7 +39,13 @@
         item = it;
         tint = await tintFor(coverUrl(it.id, 96, it.updatedAt));
       })
-      .catch((err) => (error = err.message));
+      .catch((err) => {
+        if (current !== id) return;
+        // Offline: a downloaded copy still has everything the page needs.
+        const saved = downloads.list.find((d) => d.itemId === current);
+        if (saved) item = saved.item;
+        else error = err.message;
+      });
   });
 
   const book = $derived(item && isBook(item) ? item : null);
@@ -93,6 +101,25 @@
     }
   }
 
+  function toggleQueue(episode: PodcastEpisode | null = null) {
+    if (!item) return;
+    const episodeId = episode?.id ?? null;
+    const at = player.queue.findIndex((q) => q.itemId === item!.id && q.episodeId === episodeId);
+    if (at >= 0) {
+      player.removeFromQueue(at);
+      toast('Removed from Up Next.');
+      return;
+    }
+    player.enqueue({
+      itemId: item.id,
+      episodeId,
+      title: episode?.title ?? item.media.metadata.title,
+      subtitle: episode ? item.media.metadata.title : (book?.media.metadata.authorName ?? ''),
+      updatedAt: item.updatedAt
+    });
+    toast(player.item ? 'Added to Up Next. It plays when the current title finishes.' : 'Added to Up Next.');
+  }
+
   async function hideFromContinue() {
     if (!progress) return;
     try {
@@ -141,14 +168,32 @@
 
         <dl class="facts">
           {#if book}
-            <div><dt>Length</dt><dd class="num">{duration(total)}</dd></div>
-            {#if chapters.length > 1}<div><dt>Chapters</dt><dd class="num">{chapters.length}</dd></div>{/if}
+            <div>
+              <dt>Length</dt>
+              <dd class="num">{duration(total)}</dd>
+            </div>
+            {#if chapters.length > 1}<div>
+                <dt>Chapters</dt>
+                <dd class="num">{chapters.length}</dd>
+              </div>{/if}
           {:else if podcast}
-            <div><dt>Episodes</dt><dd class="num">{podcast.media.episodes?.length ?? 0}</dd></div>
+            <div>
+              <dt>Episodes</dt>
+              <dd class="num">{podcast.media.episodes?.length ?? 0}</dd>
+            </div>
           {/if}
-          {#if book?.media.metadata.publishedYear}<div><dt>Published</dt><dd>{book.media.metadata.publishedYear}</dd></div>{/if}
-          {#if book?.media.metadata.publisher}<div><dt>Publisher</dt><dd>{book.media.metadata.publisher}</dd></div>{/if}
-          {#if meta.language}<div><dt>Language</dt><dd>{meta.language}</dd></div>{/if}
+          {#if book?.media.metadata.publishedYear}<div>
+              <dt>Published</dt>
+              <dd>{book.media.metadata.publishedYear}</dd>
+            </div>{/if}
+          {#if book?.media.metadata.publisher}<div>
+              <dt>Publisher</dt>
+              <dd>{book.media.metadata.publisher}</dd>
+            </div>{/if}
+          {#if meta.language}<div>
+              <dt>Language</dt>
+              <dd>{meta.language}</dd>
+            </div>{/if}
         </dl>
 
         {#if book}
@@ -168,6 +213,20 @@
             <button class="btn btn-quiet btn-lg" onclick={() => toggleFinished()} disabled={busy}>
               {#if progress?.isFinished}<CircleCheck size={18} /> Finished{:else}<Check size={18} /> Mark as finished{/if}
             </button>
+            <DownloadButton itemId={item.id} />
+            {#if !isCurrent}
+              {@const queued = player.inQueue(item.id)}
+              <button
+                class="icon-btn"
+                onclick={() => toggleQueue()}
+                aria-pressed={queued}
+                title={queued ? 'Remove from Up Next' : 'Play after the current title'}
+                aria-label={queued ? 'Remove from Up Next' : 'Add to Up Next'}
+              >
+                {#if queued}<ListX size={18} />{:else}<ListEnd size={18} />{/if}
+              </button>
+            {/if}
+            <AddToPlaylist libraryId={item.libraryId} entry={{ libraryItemId: item.id }} />
             {#if progress && !progress.isFinished && !progress.hideFromContinueListening && progress.currentTime > 0}
               <button class="icon-btn" onclick={hideFromContinue} title="Remove from Continue Listening" aria-label="Remove from Continue Listening">
                 <EyeOff size={18} />
@@ -177,7 +236,7 @@
               {#if progress?.isFinished}
                 Finished {date(progress.finishedAt)}
               {:else if time > 0}
-                {duration(Math.max(0, total - time) / (prefs.playbackRate || 1))} left
+                {duration(Math.max(0, total - time) / (player.rateFor(item.id) || 1))} left
               {/if}
             </span>
           </div>
@@ -223,16 +282,36 @@
               {@const on = player.isCurrent(podcast.id, ep.id)}
               <li class="ep" class:on>
                 <button class="ep-play" onclick={() => playEpisode(ep)} aria-label={on && player.isPlaying ? `Pause ${ep.title}` : `Play ${ep.title}`}>
-                  {#if on && player.isPlaying}<Pause size={16} fill="currentColor" strokeWidth={0} />{:else}<Play size={16} fill="currentColor" strokeWidth={0} />{/if}
+                  {#if on && player.isPlaying}<Pause size={16} fill="currentColor" strokeWidth={0} />{:else}<Play
+                      size={16}
+                      fill="currentColor"
+                      strokeWidth={0}
+                    />{/if}
                 </button>
                 <div class="ep-main">
-                  <span class="ep-date faint">{date(ep.publishedAt)}{ep.season ? `, season ${ep.season}` : ''}{ep.episode ? `, episode ${ep.episode}` : ''}</span>
+                  <span class="ep-date faint"
+                    >{date(ep.publishedAt)}{ep.season ? `, season ${ep.season}` : ''}{ep.episode ? `, episode ${ep.episode}` : ''}</span
+                  >
                   <span class="ep-title">{ep.title}</span>
                   {#if ep.description}<span class="ep-desc">{plain(ep.description)}</span>{/if}
                   {#if p && !p.isFinished && p.progress > 0}<div class="ep-prog"><Progress value={p.progress} /></div>{/if}
                 </div>
                 <div class="ep-side">
                   <span class="faint num">{ep.duration ? duration(ep.duration, { short: true }) : ''}</span>
+                  {#if !on}
+                    {@const queued = player.inQueue(podcast.id, ep.id)}
+                    <button
+                      class="icon-btn"
+                      onclick={() => toggleQueue(ep)}
+                      aria-pressed={queued}
+                      aria-label={queued ? 'Remove from Up Next' : 'Add to Up Next'}
+                      title={queued ? 'Remove from Up Next' : 'Add to Up Next'}
+                    >
+                      {#if queued}<ListX size={17} />{:else}<ListEnd size={17} />{/if}
+                    </button>
+                  {/if}
+                  <DownloadButton itemId={podcast.id} episodeId={ep.id} compact />
+                  <AddToPlaylist libraryId={podcast.libraryId} entry={{ libraryItemId: podcast.id, episodeId: ep.id }} size={17} />
                   <button
                     class="icon-btn"
                     aria-pressed={!!p?.isFinished}
@@ -402,9 +481,13 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     margin-top: 24px;
+  }
+  .icon-btn[aria-pressed='true'] {
+    color: var(--accent);
   }
   .where {
     margin-left: 10px;

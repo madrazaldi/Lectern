@@ -36,7 +36,7 @@
         <button
           class="opt wide"
           class:on={player.sleep.kind === 'chapter'}
-          disabled={!player.session}
+          disabled={!player.ready}
           onclick={() => {
             player.sleepAtChapterEnd();
             close();

@@ -8,7 +8,5 @@
     <path d="M5.2 10.5A10 10 0 1 1 4 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
     <path d="M4.6 5.6v5.4H10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
   </g>
-  <text x="14.4" y="17.9" text-anchor="middle" font-size="9.5" font-weight="700" fill="currentColor" font-family="var(--font-sans)"
-    >{seconds}</text
-  >
+  <text x="14.4" y="17.9" text-anchor="middle" font-size="9.5" font-weight="700" fill="currentColor" font-family="var(--font-sans)">{seconds}</text>
 </svg>

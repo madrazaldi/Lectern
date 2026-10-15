@@ -1,15 +1,32 @@
 <script lang="ts">
+  import { Plus } from '@lucide/svelte';
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import * as abs from '$lib/api/abs';
   import type { Collection, Playlist } from '$lib/api/types';
   import Cover from '$lib/components/Cover.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { errorMessage, toast } from '$lib/stores/toast.svelte';
   import { plural } from '$lib/util/format';
 
   let collections = $state<Collection[] | null>(null);
   let playlists = $state<Playlist[]>([]);
   let error = $state<string | null>(null);
+  let creating = $state(false);
+  let newName = $state('');
+
+  async function create(e: SubmitEvent) {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    try {
+      const p = await abs.createPlaylist(session.library!.id, name);
+      void goto(`/collections/${p.id}?playlist=1`);
+    } catch (err) {
+      toast(`Couldn't create the playlist. ${errorMessage(err)}`, { tone: 'error' });
+    }
+  }
 
   onMount(() => {
     const lib = session.library!.id;
@@ -17,12 +34,27 @@
       .getCollections(lib)
       .then((c) => (collections = c))
       .catch((err) => (error = err.message));
-    abs.getPlaylists(lib).then((p) => (playlists = p)).catch(() => {});
+    abs
+      .getPlaylists(lib)
+      .then((p) => (playlists = p))
+      .catch(() => {});
   });
 </script>
 
 <div class="page">
-  <h1 class="page-title">Collections</h1>
+  <header class="head">
+    <h1 class="page-title">Collections</h1>
+    {#if creating}
+      <form onsubmit={create}>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input class="field" bind:value={newName} placeholder="Playlist name" aria-label="New playlist name" autofocus />
+        <button class="btn btn-primary" disabled={!newName.trim()}>Create</button>
+        <button type="button" class="btn btn-quiet" onclick={() => (creating = false)}>Cancel</button>
+      </form>
+    {:else}
+      <button class="btn btn-quiet" onclick={() => (creating = true)}><Plus size={16} /> New playlist</button>
+    {/if}
+  </header>
 
   {#if error}
     <EmptyState title="Couldn't load collections"><p>{error}</p></EmptyState>
@@ -59,6 +91,20 @@
 </div>
 
 <style>
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .head form {
+    display: flex;
+    gap: 8px;
+  }
+  .head input {
+    width: 240px;
+    height: 36px;
+  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

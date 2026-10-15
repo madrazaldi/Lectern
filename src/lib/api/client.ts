@@ -1,13 +1,11 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+import { inTauri, secrets } from '$lib/native';
 import type { User } from './types';
 
 // Requests go through the Rust HTTP client: Audiobookshelf answers CORS preflights
 // with 401, so the webview's own fetch can't reach most servers.
 // In a plain browser (vite dev without Tauri), the dev server relays requests instead; see vite.config.js.
-const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-const httpFetch: typeof fetch = inTauri
-  ? (tauriFetch as typeof fetch)
-  : (input, init) => fetch(`/__abs_proxy?url=${encodeURIComponent(String(input))}`, init);
+const httpFetch: typeof fetch = inTauri ? (tauriFetch as typeof fetch) : (input, init) => fetch(`/__abs_proxy?url=${encodeURIComponent(String(input))}`, init);
 
 export type AuthMethod = 'password' | 'apikey';
 
@@ -19,7 +17,19 @@ export interface Credentials {
   username?: string;
 }
 
-const STORAGE_KEY = 'lectern.credentials';
+export interface Account extends Credentials {
+  id: string;
+  userId?: string;
+}
+
+interface Vault {
+  active: string | null;
+  accounts: Account[];
+}
+
+// Every account's tokens sit in one keychain entry; the old plaintext localStorage copy is migrated on first launch.
+const VAULT_KEY = 'accounts';
+const LEGACY_KEY = 'lectern.credentials';
 
 export class ApiError extends Error {
   constructor(
@@ -30,22 +40,63 @@ export class ApiError extends Error {
   }
 }
 
-let creds: Credentials | null = load();
+let vault: Vault = { active: null, accounts: [] };
+let creds: Account | null = null;
+let saving: Promise<void> = Promise.resolve();
 let refreshing: Promise<boolean> | null = null;
 let onSignedOut: (() => void) | null = null;
+let onReachability: ((online: boolean) => void) | null = null;
 
-function load(): Credentials | null {
+/** Load accounts from the keychain. Call once before anything else touches the API. */
+export async function initCredentials() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Credentials) : null;
+    const raw = await secrets.get(VAULT_KEY);
+    if (raw) vault = JSON.parse(raw) as Vault;
   } catch {
-    return null;
+    vault = { active: null, accounts: [] };
+  }
+  const legacy = localStorage.getItem(LEGACY_KEY);
+  if (legacy) {
+    try {
+      const old = JSON.parse(legacy) as Credentials;
+      if (!vault.accounts.some((a) => a.serverUrl === old.serverUrl && a.username === old.username)) {
+        const id = crypto.randomUUID();
+        vault.accounts.push({ ...old, id });
+        vault.active ??= id;
+        migrateScopedKeys(id);
+      }
+      await persist();
+      localStorage.removeItem(LEGACY_KEY);
+    } catch {
+      // Unreadable leftovers: drop them rather than keep a plaintext token around.
+      localStorage.removeItem(LEGACY_KEY);
+    }
+  }
+  creds = vault.accounts.find((a) => a.id === vault.active) ?? vault.accounts[0] ?? null;
+}
+
+/** Keys written before accounts existed move under the migrated account's namespace. */
+function migrateScopedKeys(id: string) {
+  for (const key of ['lectern.library', 'lectern.lastPlayed']) {
+    const v = localStorage.getItem(key);
+    if (v !== null) {
+      localStorage.setItem(`${key}.${id}`, v);
+      localStorage.removeItem(key);
+    }
   }
 }
 
 function persist() {
-  if (creds) localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
-  else localStorage.removeItem(STORAGE_KEY);
+  const snapshot = JSON.stringify(vault);
+  saving = saving.then(() => secrets.set(VAULT_KEY, snapshot)).catch((err) => console.error('Could not save credentials', err));
+  return saving;
+}
+
+function updateActive(patch: Partial<Account>) {
+  if (!creds) return;
+  creds = { ...creds, ...patch };
+  vault.accounts = vault.accounts.map((a) => (a.id === creds!.id ? creds! : a));
+  void persist();
 }
 
 export function normalizeServerUrl(input: string): string {
@@ -58,13 +109,38 @@ export function getCredentials() {
   return creds;
 }
 
-export function setCredentials(next: Credentials | null) {
-  creds = next;
-  persist();
+export function listAccounts(): Account[] {
+  return vault.accounts;
+}
+
+/** localStorage key namespaced to the signed-in account, for per-account state (library choice, queue, etc.). */
+export function scopedKey(key: string) {
+  return creds ? `${key}.${creds.id}` : key;
+}
+
+export async function switchAccount(id: string) {
+  if (!vault.accounts.some((a) => a.id === id)) return;
+  vault.active = id;
+  creds = vault.accounts.find((a) => a.id === id) ?? null;
+  await persist();
+}
+
+async function addAccount(next: Omit<Account, 'id'>) {
+  const existing = vault.accounts.find((a) => a.serverUrl === next.serverUrl && (a.userId ?? a.username) === (next.userId ?? next.username));
+  const account: Account = { ...next, id: existing?.id ?? crypto.randomUUID() };
+  vault.accounts = existing ? vault.accounts.map((a) => (a.id === existing.id ? account : a)) : [...vault.accounts, account];
+  vault.active = account.id;
+  creds = account;
+  await persist();
 }
 
 export function onSessionExpired(fn: () => void) {
   onSignedOut = fn;
+}
+
+/** Told whenever a request reaches the server (true) or fails to (false). */
+export function onReachabilityChange(fn: (online: boolean) => void) {
+  onReachability = fn;
 }
 
 export function serverUrl() {
@@ -73,6 +149,10 @@ export function serverUrl() {
 
 export function token() {
   return creds?.accessToken ?? '';
+}
+
+export function authHeaders(): Record<string, string> {
+  return creds ? { Authorization: `Bearer ${creds.accessToken}` } : {};
 }
 
 /** Absolute URL for a server path, with the access token attached for media the webview loads directly. */
@@ -108,12 +188,10 @@ async function refreshAccessToken(): Promise<boolean> {
       });
       if (!res.ok) return false;
       const data = (await res.json()) as { user: User };
-      creds = {
-        ...creds!,
+      updateActive({
         accessToken: data.user.accessToken ?? data.user.token ?? creds!.accessToken,
         refreshToken: data.user.refreshToken ?? creds!.refreshToken
-      };
-      persist();
+      });
       return true;
     } catch {
       return false;
@@ -164,8 +242,10 @@ export async function request<T>(path: string, opts: RequestOptions = {}, retrie
     });
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') throw err;
+    onReachability?.(false);
     throw new ApiError(0, `Can't reach ${creds.serverUrl}. Check your connection or the server address.`);
   }
+  onReachability?.(true);
 
   if (res.status === 401 && !retried) {
     if (await refreshAccessToken()) return request<T>(path, opts, true);
@@ -225,36 +305,44 @@ export async function loginWithPassword(serverUrl: string, username: string, pas
   const data = (await res.json()) as { user: User; userDefaultLibraryId?: string };
   const accessToken = data.user.accessToken ?? data.user.token;
   if (!accessToken) throw new ApiError(0, 'The server didn’t return a token.');
-  setCredentials({
+  await addAccount({
     serverUrl,
     method: 'password',
     accessToken,
     refreshToken: data.user.refreshToken ?? null,
-    username: data.user.username
+    username: data.user.username,
+    userId: data.user.id
   });
   return data;
 }
 
 export async function loginWithApiKey(serverUrl: string, apiKey: string) {
-  setCredentials({ serverUrl, method: 'apikey', accessToken: apiKey.trim(), refreshToken: null });
+  const key = apiKey.trim();
+  let res: Response;
   try {
-    const user = await request<User>('/api/me');
-    creds = { ...creds!, username: user.username };
-    persist();
-    return user;
-  } catch (err) {
-    setCredentials(null);
-    if (err instanceof ApiError && err.status === 401) throw new ApiError(401, 'The server didn’t accept that API key.');
-    throw err;
+    res = await httpFetch(`${serverUrl}/api/me`, { headers: { Authorization: `Bearer ${key}` } });
+  } catch {
+    throw new ApiError(0, `Can't reach ${serverUrl}.`);
   }
+  if (res.status === 401) throw new ApiError(401, 'The server didn’t accept that API key.');
+  if (!res.ok) throw new ApiError(res.status, `Sign-in failed (${res.status}).`);
+  const user = (await res.json()) as User;
+  await addAccount({ serverUrl, method: 'apikey', accessToken: key, refreshToken: null, username: user.username, userId: user.id });
+  return user;
 }
 
-export async function logout() {
-  if (creds?.method === 'password' && creds.refreshToken) {
-    await httpFetch(`${creds.serverUrl}/logout`, {
+/** Sign the active account out and forget it. Returns the account that becomes active next, if any. */
+export async function logout(): Promise<Account | null> {
+  const current = creds;
+  if (current?.method === 'password' && current.refreshToken) {
+    await httpFetch(`${current.serverUrl}/logout`, {
       method: 'POST',
-      headers: { 'x-refresh-token': creds.refreshToken }
+      headers: { 'x-refresh-token': current.refreshToken }
     }).catch(() => {});
   }
-  setCredentials(null);
+  if (current) vault.accounts = vault.accounts.filter((a) => a.id !== current.id);
+  creds = vault.accounts[0] ?? null;
+  vault.active = creds?.id ?? null;
+  await persist();
+  return creds;
 }

@@ -35,8 +35,17 @@
         input?.select();
       }
     };
+    // Search from the app menu (⌘F).
+    const fromMenu = () => {
+      input?.focus();
+      input?.select();
+    };
     window.addEventListener('keydown', focus);
-    return () => window.removeEventListener('keydown', focus);
+    window.addEventListener('lectern:focus-search', fromMenu);
+    return () => {
+      window.removeEventListener('keydown', focus);
+      window.removeEventListener('lectern:focus-search', fromMenu);
+    };
   });
 </script>
 

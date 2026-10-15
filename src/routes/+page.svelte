@@ -14,7 +14,6 @@
   import SeriesCard from '$lib/components/SeriesCard.svelte';
   import Shelf from '$lib/components/Shelf.svelte';
   import { player } from '$lib/stores/player.svelte';
-  import { prefs } from '$lib/stores/prefs.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { tintFor, type Tint } from '$lib/util/color';
   import { duration } from '$lib/util/format';
@@ -55,7 +54,7 @@
     const first = Array.isArray(s) ? s[0] : s;
     return first ?? null;
   });
-  const heroLeft = $derived(Math.max(0, heroDuration - heroTime) / (prefs.playbackRate || 1));
+  const heroLeft = $derived(Math.max(0, heroDuration - heroTime) / (hero ? player.rateFor(hero.id) : 1));
 
   function heroPlay() {
     if (!hero) return;
@@ -65,7 +64,7 @@
 
   function heroSeek(t: number) {
     if (!hero) return;
-    if (heroIsPlaying && player.session) void player.seek(t);
+    if (heroIsPlaying && player.ready) void player.seek(t);
     else void player.play(hero.id, null, t);
   }
 
@@ -99,7 +98,13 @@
         </p>
 
         <div class="hero-shelf">
-          <ChapterShelf size="full" chapters={heroChapters.length ? heroChapters : [{ id: 0, start: 0, end: heroDuration, title: hero.media.metadata.title }]} time={heroTime} duration={heroDuration} onseek={heroSeek} />
+          <ChapterShelf
+            size="full"
+            chapters={heroChapters.length ? heroChapters : [{ id: 0, start: 0, end: heroDuration, title: hero.media.metadata.title }]}
+            time={heroTime}
+            duration={heroDuration}
+            onseek={heroSeek}
+          />
         </div>
 
         <div class="hero-actions">

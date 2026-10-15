@@ -1,19 +1,29 @@
 <script lang="ts">
-  import { LogOut } from '@lucide/svelte';
+  import { LogOut, Plus } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import { getCredentials, probeServer, type ServerStatus } from '$lib/api/client';
+  import { getCredentials, listAccounts, probeServer, scopedKey, switchAccount, type ServerStatus } from '$lib/api/client';
+  import { APP_VERSION, inTauri } from '$lib/native';
+  import { downloads } from '$lib/stores/downloads.svelte';
   import { player } from '$lib/stores/player.svelte';
   import { prefs, type Theme } from '$lib/stores/prefs.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { bytes } from '$lib/util/format';
 
   const creds = getCredentials();
+  const accounts = listAccounts();
   let status = $state<ServerStatus | null>(null);
 
   onMount(() => {
-    if (creds) probeServer(creds.serverUrl).then((s) => (status = s)).catch(() => {});
+    if (creds)
+      probeServer(creds.serverUrl)
+        .then((s) => (status = s))
+        .catch(() => {});
+    void downloads.refreshUsage();
   });
 
   const skipOptions = [5, 10, 15, 30, 45, 60];
+  const speedOptions = [0.75, 0.8, 0.9, 1, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.6, 1.75, 2, 2.25, 2.5, 3];
+  const customRates = $derived(Object.keys(prefs.itemRates).length);
   const themes: { value: Theme; label: string }[] = [
     { value: 'system', label: 'Match system' },
     { value: 'dark', label: 'Dark' },
@@ -28,14 +38,30 @@
     ['B', 'Add a bookmark'],
     ['↑ / ↓', 'Change speed (in Now Playing)'],
     ['⌘K or /', 'Search'],
+    ['⌘1 … ⌘7', 'Home, Library, Series, Authors, Collections, Downloads, Listening'],
+    ['⌘[ / ⌘]', 'Back / forward'],
     ['⌘,', 'Settings']
   ];
 
+  function host(url: string) {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  }
+
   async function signOut() {
     await player.stop();
-    localStorage.removeItem('lectern.lastPlayed');
+    localStorage.removeItem(scopedKey('lectern.lastPlayed'));
     player.item = null;
     await session.signOut();
+  }
+
+  async function useAccount(id: string) {
+    await player.shutdown();
+    await switchAccount(id);
+    location.reload();
   }
 </script>
 
@@ -45,11 +71,42 @@
   <section>
     <h2 class="serif">Account</h2>
     <dl>
-      <div><dt>Server</dt><dd class="selectable">{creds?.serverUrl}</dd></div>
-      {#if status}<div><dt>Server version</dt><dd>Audiobookshelf {status.serverVersion}</dd></div>{/if}
-      <div><dt>Signed in as</dt><dd>{session.user?.username} <span class="faint">({creds?.method === 'apikey' ? 'API key' : session.user?.type})</span></dd></div>
+      <div>
+        <dt>Server</dt>
+        <dd class="selectable">{creds?.serverUrl}</dd>
+      </div>
+      {#if status}<div>
+          <dt>Server version</dt>
+          <dd>Audiobookshelf {status.serverVersion}</dd>
+        </div>{/if}
+      <div>
+        <dt>Signed in as</dt>
+        <dd>{session.user?.username} <span class="faint">({creds?.method === 'apikey' ? 'API key' : session.user?.type})</span></dd>
+      </div>
+      <div>
+        <dt>Sync</dt>
+        <dd>{session.online ? 'Connected' : 'Offline, retrying in the background'}</dd>
+      </div>
     </dl>
-    <button class="btn btn-quiet" onclick={signOut}><LogOut size={16} /> Sign out</button>
+    <div class="buttons">
+      <button class="btn btn-quiet" onclick={signOut}><LogOut size={16} /> Sign out</button>
+      <button class="btn btn-quiet" onclick={() => (session.addingAccount = true)}><Plus size={16} /> Add account</button>
+    </div>
+    {#if accounts.length > 1}
+      <ul class="accounts" aria-label="Saved accounts">
+        {#each accounts as a (a.id)}
+          <li>
+            <span class="avatar" aria-hidden="true">{(a.username ?? '?').slice(0, 1).toUpperCase()}</span>
+            <span class="who"><strong>{a.username}</strong> <span class="faint">on {host(a.serverUrl)}</span></span>
+            {#if a.id === creds?.id}
+              <span class="current">Current</span>
+            {:else}
+              <button class="btn btn-quiet" onclick={() => useAccount(a.id)}>Switch</button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </section>
 
   <section>
@@ -97,20 +154,80 @@
         {#each [3, 5, 10, 15, 30] as s (s)}<option value={s}>{s} seconds</option>{/each}
       </select>
     </label>
-    <div class="row">
-      <div class="label"><span>Speed</span><small>Used for every book. Change it any time from the player.</small></div>
-      <span class="num">{prefs.playbackRate}×</span>
-    </div>
+    <label class="row">
+      <div class="label"><span>Default speed</span><small>Used for anything you haven't set a speed for.</small></div>
+      <select class="select" bind:value={prefs.playbackRate}>
+        {#if !speedOptions.includes(prefs.playbackRate)}<option value={prefs.playbackRate}>{prefs.playbackRate}×</option>{/if}
+        {#each speedOptions as r (r)}<option value={r}>{r}×</option>{/each}
+      </select>
+    </label>
+    <label class="row">
+      <div class="label">
+        <span>Remember speed for each title</span>
+        <small>
+          Changing speed in the player applies to that title only.{#if customRates}
+            {customRates === 1 ? 'One title has' : `${customRates} titles have`} their own speed.
+            <button
+              class="link"
+              onclick={(e) => {
+                e.preventDefault();
+                prefs.itemRates = {};
+              }}>Reset all</button
+            >{/if}
+        </small>
+      </div>
+      <input type="checkbox" class="switch" bind:checked={prefs.perItemSpeed} />
+    </label>
+    <label class="row">
+      <div class="label">
+        <span>Keep going when a title ends</span>
+        <small>If Up Next is empty, play the next book in the series or the next podcast episode.</small>
+      </div>
+      <input type="checkbox" class="switch" bind:checked={prefs.autoContinue} />
+    </label>
+    {#if inTauri}
+      <label class="row">
+        <div class="label">
+          <span>Keep playing when the window is closed</span>
+          <small>Closing the window hides it; playback carries on and the menu bar icon controls it. Quit with ⌘Q.</small>
+        </div>
+        <input type="checkbox" class="switch" bind:checked={prefs.keepPlayingWhenClosed} />
+      </label>
+    {/if}
   </section>
+
+  {#if inTauri}
+    <section>
+      <h2 class="serif">Downloads</h2>
+      <div class="row">
+        <div class="label">
+          <span>Space used</span>
+          <small
+            >{downloads.list.length ? `${downloads.list.length} downloaded ${downloads.list.length === 1 ? 'title' : 'titles'}.` : 'Nothing downloaded.'}</small
+          >
+        </div>
+        <span class="num">{bytes(downloads.usage)}</span>
+      </div>
+      <div class="row">
+        <div class="label"><span>Manage downloads</span></div>
+        <a class="btn btn-quiet" href="/downloads">Open Downloads</a>
+      </div>
+    </section>
+  {/if}
 
   <section>
     <h2 class="serif">Keyboard shortcuts</h2>
     <dl class="keys">
       {#each shortcuts as [k, v] (k)}
-        <div><dt><kbd>{k}</kbd></dt><dd>{v}</dd></div>
+        <div>
+          <dt><kbd>{k}</kbd></dt>
+          <dd>{v}</dd>
+        </div>
       {/each}
     </dl>
   </section>
+
+  <p class="version faint">Lectern {APP_VERSION}</p>
 </div>
 
 <style>
@@ -208,6 +325,49 @@
   }
   .switch:checked::after {
     transform: translateX(16px);
+  }
+  .buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .accounts {
+    list-style: none;
+    margin: 16px 0 0;
+    padding: 0;
+  }
+  .accounts li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--rule-soft);
+    font-size: var(--t-sm);
+  }
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .who {
+    flex: 1;
+  }
+  .current {
+    font-size: var(--t-xs);
+    font-weight: 650;
+    color: var(--accent);
+  }
+  .link {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .version {
+    margin: 40px 0 0;
+    font-size: var(--t-xs);
   }
   .keys > div {
     grid-template-columns: 140px 1fr;

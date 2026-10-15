@@ -1,7 +1,9 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import process from "node:process";
+import { readFileSync } from "node:fs";
 const host = process.env.TAURI_DEV_HOST;
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 const FORWARDED = ["authorization", "content-type", "x-refresh-token", "x-return-tokens"];
 
@@ -50,6 +52,8 @@ function absDevProxy() {
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [sveltekit(), absDevProxy()],
+  define: { __APP_VERSION__: JSON.stringify(version) },
+  test: { include: ["src/**/*.test.ts"] },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

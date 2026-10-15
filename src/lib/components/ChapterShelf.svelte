@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Chapter } from '$lib/api/types';
-  import { findChapter } from '$lib/stores/player.svelte';
+  import { findChapter } from '$lib/util/playback';
   import { clock } from '$lib/util/format';
 
   /**

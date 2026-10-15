@@ -1,5 +1,20 @@
 <script lang="ts">
-  import { Bookmark, BookmarkPlus, ChevronDown, LoaderCircle, Pause, Pencil, Play, SkipBack, SkipForward, Trash2 } from '@lucide/svelte';
+  import {
+    ArrowDown,
+    ArrowDownToLine,
+    ArrowUp,
+    Bookmark,
+    BookmarkPlus,
+    ChevronDown,
+    LoaderCircle,
+    Pause,
+    Pencil,
+    Play,
+    SkipBack,
+    SkipForward,
+    Trash2,
+    X
+  } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
   import { coverUrl } from '$lib/api/client';
   import { player } from '$lib/stores/player.svelte';
@@ -15,14 +30,14 @@
   import VolumeControl from './VolumeControl.svelte';
 
   const item = $derived(player.item!);
-  let tab = $state<'chapters' | 'bookmarks'>('chapters');
+  let tab = $state<'chapters' | 'bookmarks' | 'queue'>('chapters');
   let list = $state<HTMLOListElement>();
   let editing = $state<number | null>(null);
   let editTitle = $state('');
 
   const marks = $derived(player.episode ? [] : session.bookmarksFor(item.id));
-  const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (prefs.playbackRate || 1));
-  const chapterLeft = $derived(player.chapter ? Math.max(0, player.chapter.end - player.currentTime) / (prefs.playbackRate || 1) : 0);
+  const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (player.rate || 1));
+  const chapterLeft = $derived(player.chapter ? Math.max(0, player.chapter.end - player.currentTime) / (player.rate || 1) : 0);
   const hasChapters = $derived(player.chapters.length > 1);
 
   // Keep the current chapter in view as playback moves on.
@@ -32,8 +47,14 @@
     list.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 
+  function playFromQueue(i: number) {
+    const q = player.queue[i];
+    player.removeFromQueue(i);
+    void player.play(q.itemId, q.episodeId);
+  }
+
   async function addBookmark() {
-    if (!player.session) return;
+    if (!player.ready) return;
     const at = player.currentTime;
     const label = player.chapter && hasChapters ? `${player.chapter.title} at ${clock(at - player.chapter.start)}` : clock(at);
     try {
@@ -78,7 +99,16 @@
   <div class="body">
     <section class="stage">
       <div class="cover">
-        <Cover itemId={item.id} title={player.title} updatedAt={item.updatedAt} width={900} aspect={1} hasCover={!!item.media.coverPath} radius="var(--r-md)" eager />
+        <Cover
+          itemId={item.id}
+          title={player.title}
+          updatedAt={item.updatedAt}
+          width={900}
+          aspect={1}
+          hasCover={!!item.media.coverPath}
+          radius="var(--r-md)"
+          eager
+        />
       </div>
 
       <div class="heading">
@@ -87,6 +117,7 @@
       </div>
 
       <div class="chapter-line">
+        {#if player.fromDownload}<span class="src" title="Playing the downloaded copy"><ArrowDownToLine size={13} /> Downloaded</span>{/if}
         {#if hasChapters && player.chapter}
           <span class="ch">{player.chapter.title}</span>
           <span class="faint num">{duration(chapterLeft, { short: true })} left in chapter</span>
@@ -107,14 +138,14 @@
         />
         <div class="times num">
           <span>{clock(player.currentTime)}</span>
-          <span>{duration(remaining, { short: true })} left at {prefs.playbackRate}×</span>
+          <span>{duration(remaining, { short: true })} left at {player.rate}×</span>
           <span>{clock(player.duration)}</span>
         </div>
       </div>
 
       <div class="controls">
-        <button class="icon-btn big" onclick={() => player.prevChapter()} disabled={!player.session} aria-label="Previous chapter"><SkipBack size={22} /></button>
-        <button class="icon-btn big" onclick={() => player.skip(-prefs.skipBack)} disabled={!player.session} aria-label="Back {prefs.skipBack} seconds">
+        <button class="icon-btn big" onclick={() => player.prevChapter()} disabled={!player.ready} aria-label="Previous chapter"><SkipBack size={22} /></button>
+        <button class="icon-btn big" onclick={() => player.skip(-prefs.skipBack)} disabled={!player.ready} aria-label="Back {prefs.skipBack} seconds">
           <SkipIcon seconds={prefs.skipBack} direction="back" size={32} />
         </button>
         <button class="main" onclick={() => player.toggle()} aria-label={player.isPlaying ? 'Pause' : 'Play'}>
@@ -126,17 +157,17 @@
             <Play size={30} fill="currentColor" strokeWidth={0} style="margin-left:3px" />
           {/if}
         </button>
-        <button class="icon-btn big" onclick={() => player.skip(prefs.skipForward)} disabled={!player.session} aria-label="Forward {prefs.skipForward} seconds">
+        <button class="icon-btn big" onclick={() => player.skip(prefs.skipForward)} disabled={!player.ready} aria-label="Forward {prefs.skipForward} seconds">
           <SkipIcon seconds={prefs.skipForward} direction="forward" size={32} />
         </button>
-        <button class="icon-btn big" onclick={() => player.nextChapter()} disabled={!player.session} aria-label="Next chapter"><SkipForward size={22} /></button>
+        <button class="icon-btn big" onclick={() => player.nextChapter()} disabled={!player.ready} aria-label="Next chapter"><SkipForward size={22} /></button>
       </div>
 
       <div class="tools">
         <SpeedControl />
         <SleepControl showLabel />
         {#if !player.episode}
-          <button class="icon-btn" onclick={addBookmark} disabled={!player.session} aria-label="Add bookmark" title="Add bookmark (B)">
+          <button class="icon-btn" onclick={addBookmark} disabled={!player.ready} aria-label="Add bookmark" title="Add bookmark (B)">
             <BookmarkPlus size={18} />
           </button>
         {/if}
@@ -154,6 +185,9 @@
             Bookmarks <span class="count num">{marks.length}</span>
           </button>
         {/if}
+        <button role="tab" aria-selected={tab === 'queue'} onclick={() => (tab = 'queue')}>
+          Up next <span class="count num">{player.queue.length}</span>
+        </button>
       </div>
 
       {#if tab === 'chapters'}
@@ -172,6 +206,38 @@
               </button>
             </li>
           {/each}
+        </ol>
+      {:else if tab === 'queue'}
+        <ol class="list">
+          {#each player.queue as q, i (q.itemId + (q.episodeId ?? ''))}
+            <li class="mark-row">
+              <button class="row q" onclick={() => playFromQueue(i)} title="Play now">
+                <span class="thumb"><Cover itemId={q.itemId} title={q.title} updatedAt={q.updatedAt} width={80} aspect={1} radius="4px" /></span>
+                <span class="qtext">
+                  <span class="name">{q.title}</span>
+                  <span class="qsub">{q.subtitle}</span>
+                </span>
+              </button>
+              <div class="mark-actions">
+                <button class="icon-btn" aria-label="Move up" onclick={() => player.moveInQueue(i, -1)} disabled={i === 0}><ArrowUp size={14} /></button>
+                <button class="icon-btn" aria-label="Move down" onclick={() => player.moveInQueue(i, 1)} disabled={i === player.queue.length - 1}
+                  ><ArrowDown size={14} /></button
+                >
+                <button class="icon-btn" aria-label="Remove from Up Next" onclick={() => player.removeFromQueue(i)}><X size={14} /></button>
+              </div>
+            </li>
+          {:else}
+            <li class="empty">
+              <p>Add titles from their page to play them one after another.</p>
+            </li>
+          {/each}
+          <li class="auto">
+            <label>
+              <input type="checkbox" bind:checked={prefs.autoContinue} />
+              When Up Next is empty, continue with the {player.episode ? 'next episode' : 'next book in the series'}
+            </label>
+            {#if player.queue.length}<button class="link" onclick={() => player.clearQueue()}>Clear</button>{/if}
+          </li>
         </ol>
       {:else}
         <ol class="list">
@@ -210,7 +276,9 @@
           {:else}
             <li class="empty">
               <p>Mark a moment to come back to it.</p>
-              <button class="btn btn-quiet" onclick={addBookmark} disabled={!player.session}><BookmarkPlus size={16} /> Add bookmark at {clock(player.currentTime)}</button>
+              <button class="btn btn-quiet" onclick={addBookmark} disabled={!player.ready}
+                ><BookmarkPlus size={16} /> Add bookmark at {clock(player.currentTime)}</button
+              >
             </li>
           {/each}
         </ol>
@@ -471,6 +539,54 @@
   .edit input {
     width: 100%;
     height: 34px;
+  }
+  .q {
+    grid-template-columns: 40px 1fr;
+    gap: 12px;
+  }
+  .thumb {
+    width: 40px;
+  }
+  .qtext {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .qsub {
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .auto {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+    padding: 12px 10px 4px;
+    border-top: 1px solid var(--rule-soft);
+    font-size: var(--t-xs);
+    color: var(--text-2);
+  }
+  .auto label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .auto input {
+    accent-color: var(--accent);
+  }
+  .link {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .src {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-3);
   }
   .empty {
     display: flex;

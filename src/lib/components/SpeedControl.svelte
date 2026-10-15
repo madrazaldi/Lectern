@@ -6,27 +6,35 @@
 
   let { placement = 'up' }: { placement?: 'up' | 'down' } = $props();
   const presets = [0.8, 1, 1.2, 1.5, 1.75, 2];
-  const label = $derived(`${prefs.playbackRate.toFixed(2).replace(/\.?0+$/, '')}×`);
+  const fmt = (r: number) => `${r.toFixed(2).replace(/\.?0+$/, '')}×`;
+  const label = $derived(fmt(player.rate));
 </script>
 
 <Popover label="Playback speed" {placement} triggerClass="icon-btn speed-trigger">
   {#snippet trigger()}
     <span class="speed num">{label}</span>
   {/snippet}
-  {#snippet children()}
-    <div class="wrap">
-      <div class="stepper">
-        <button class="icon-btn" onclick={() => player.setRate(prefs.playbackRate - 0.05)} aria-label="Slower"><Minus size={16} /></button>
-        <span class="big num">{label}</span>
-        <button class="icon-btn" onclick={() => player.setRate(prefs.playbackRate + 0.05)} aria-label="Faster"><Plus size={16} /></button>
-      </div>
-      <div class="presets">
-        {#each presets as p (p)}
-          <button class="preset num" class:on={Math.abs(prefs.playbackRate - p) < 0.001} onclick={() => player.setRate(p)}>{p}×</button>
-        {/each}
-      </div>
+  <div class="wrap">
+    <div class="stepper">
+      <button class="icon-btn" onclick={() => player.setRate(player.rate - 0.05)} aria-label="Slower"><Minus size={16} /></button>
+      <span class="big num">{label}</span>
+      <button class="icon-btn" onclick={() => player.setRate(player.rate + 0.05)} aria-label="Faster"><Plus size={16} /></button>
     </div>
-  {/snippet}
+    <div class="presets">
+      {#each presets as p (p)}
+        <button class="preset num" class:on={Math.abs(player.rate - p) < 0.001} onclick={() => player.setRate(p)}>{p}×</button>
+      {/each}
+    </div>
+    {#if prefs.perItemSpeed && player.item}
+      <p class="scope">
+        {#if player.hasOwnRate}
+          Just for this title. <button class="link" onclick={() => player.resetRate()}>Use default ({fmt(prefs.playbackRate)})</button>
+        {:else}
+          Default speed. Changing it here applies to this title only.
+        {/if}
+      </p>
+    {/if}
+  </div>
 </Popover>
 
 <style>
@@ -67,6 +75,19 @@
   .preset:hover {
     background: var(--rule-soft);
     color: var(--text);
+  }
+  .scope {
+    margin: 2px 2px 0;
+    max-width: 220px;
+    font-size: var(--t-xs);
+    color: var(--text-3);
+  }
+  .link {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .link:hover {
+    text-decoration: underline;
   }
   .preset.on {
     background: var(--accent-soft);

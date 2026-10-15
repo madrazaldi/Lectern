@@ -248,6 +248,13 @@ img {
 .btn-quiet:hover:not(:disabled) {
   background: var(--rule);
 }
+.btn-danger {
+  background: var(--danger);
+  color: var(--accent-ink);
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 .btn-lg {
   height: 44px;
   padding: 0 22px;

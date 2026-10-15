@@ -32,6 +32,8 @@
       if (method === 'password') await loginWithPassword(url, username.trim(), password);
       else await loginWithApiKey(url, apiKey);
       localStorage.setItem(LAST_SERVER, url);
+      // Signing in to another account on top of one already open: restart into it with clean state.
+      if (session.addingAccount) return location.reload();
       await session.load();
     } catch (err) {
       error = (err as Error).message;
@@ -55,7 +57,7 @@
 
   <section class="panel">
     <form onsubmit={submit} novalidate>
-      <h2>Connect to your server</h2>
+      <h2>{session.addingAccount ? 'Add an account' : 'Connect to your server'}</h2>
 
       <label class="lbl">
         Server address
@@ -83,7 +85,8 @@
       {:else}
         <label class="lbl">
           API key
-          <textarea class="field key" bind:value={apiKey} rows="3" spellcheck="false" placeholder="Create one under Settings → API Keys on your server"></textarea>
+          <textarea class="field key" bind:value={apiKey} rows="3" spellcheck="false" placeholder="Create one under Settings → API Keys on your server"
+          ></textarea>
         </label>
       {/if}
 
@@ -92,6 +95,9 @@
       <button class="btn btn-primary btn-lg submit" disabled={busy}>
         {#if busy}<LoaderCircle size={18} class="spin" /> Connecting{:else}Sign in{/if}
       </button>
+      {#if session.addingAccount}
+        <button type="button" class="btn btn-quiet btn-lg submit" onclick={() => (session.addingAccount = false)} disabled={busy}>Cancel</button>
+      {/if}
     </form>
   </section>
 </div>

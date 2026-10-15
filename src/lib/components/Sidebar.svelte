@@ -1,8 +1,12 @@
 <script lang="ts">
-  import { BookOpen, ChartNoAxesColumn, Feather, House, LibraryBig, ListMusic, Mic, Settings, Shapes } from '@lucide/svelte';
+  import { ArrowDownToLine, BookOpen, ChartNoAxesColumn, CloudOff, Feather, House, LibraryBig, ListMusic, Mic, Settings, Shapes } from '@lucide/svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  import { inTauri } from '$lib/native';
+  import { downloads } from '$lib/stores/downloads.svelte';
   import { session } from '$lib/stores/session.svelte';
+
+  const activeDownloads = $derived(downloads.list.filter((d) => d.status === 'downloading').length);
 
   const isBooks = $derived(session.library?.mediaType !== 'podcast');
   const nav = $derived([
@@ -65,9 +69,21 @@
         Listening
       </a>
     </li>
+    {#if inTauri}
+      <li>
+        <a href="/downloads" class:on={active('/downloads')} aria-current={active('/downloads') ? 'page' : undefined}>
+          <ArrowDownToLine size={18} strokeWidth={1.8} />
+          Downloads
+          {#if activeDownloads}<span class="badge num" title="Downloading">{activeDownloads}</span>{/if}
+        </a>
+      </li>
+    {/if}
   </ul>
 
   <div class="foot">
+    {#if !session.online}
+      <p class="offline" title="Can't reach your server. Retrying in the background."><CloudOff size={14} /> Offline</p>
+    {/if}
     <a href="/settings" class:on={active('/settings')} class="user">
       <span class="avatar" aria-hidden="true">{session.user?.username.slice(0, 1).toUpperCase()}</span>
       <span class="name">{session.user?.username}</span>
@@ -172,6 +188,26 @@
   }
   .foot {
     margin-top: auto;
+  }
+  .badge {
+    margin-left: auto;
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    text-align: center;
+  }
+  .offline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 10px 8px;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    color: var(--text-3);
   }
   .user {
     display: flex;

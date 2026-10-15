@@ -66,7 +66,9 @@
       <div class="info">
         <h1 class="page-title big">{series.name}</h1>
         {#if authors}<p class="by">{authors}</p>{/if}
-        <p class="facts faint num">{[plural(books.length, 'book'), duration(totalLength), finished ? `${finished} finished` : ''].filter(Boolean).join(', ')}</p>
+        <p class="facts faint num">
+          {[plural(books.length, 'book'), duration(totalLength), finished ? `${finished} finished` : ''].filter(Boolean).join(', ')}
+        </p>
         {#if series.description}
           <div class="desc serif selectable">{@html safeHtml(series.description)}</div>
         {/if}

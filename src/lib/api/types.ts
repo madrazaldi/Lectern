@@ -80,6 +80,7 @@ export interface AudioFile {
   bitRate: number;
   codec: string;
   mimeType: string;
+  exclude?: boolean;
   metadata: { filename: string; ext: string; size: number };
 }
 
@@ -219,6 +220,8 @@ export interface Collection {
 
 export interface Playlist {
   id: string;
+  libraryId: string;
+  userId: string;
   name: string;
   description: string | null;
   items: { libraryItemId: string; episodeId: string | null; libraryItem: LibraryItem; episode?: PodcastEpisode }[];

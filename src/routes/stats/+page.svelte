@@ -110,7 +110,7 @@
       <h2 class="serif">The past year</h2>
       <div class="cal-wrap">
         <div class="months" style:grid-template-columns="repeat(53, 1fr)">
-          {#each monthLabels as m (m.i)}<span style:grid-column="{m.i + 1}" style:grid-row="1">{m.label}</span>{/each}
+          {#each monthLabels as m (m.i)}<span style:grid-column={m.i + 1} style:grid-row="1">{m.label}</span>{/each}
         </div>
         <div class="cal" role="img" aria-label="Daily listening over the past year">
           {#each weeks as col, w (w)}

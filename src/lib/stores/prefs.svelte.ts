@@ -14,6 +14,15 @@ export interface Prefs {
   collapseSeries: boolean;
   librarySort: string;
   librarySortDesc: boolean;
+  libraryView: 'grid' | 'list';
+  /** Remember a separate speed for each book instead of one speed for everything. */
+  perItemSpeed: boolean;
+  /** Speeds chosen per item, keyed by library item id. `playbackRate` is the default. */
+  itemRates: Record<string, number>;
+  /** When something finishes and Up Next is empty, carry on with the next book in the series or the next episode. */
+  autoContinue: boolean;
+  /** Closing the window hides it and playback carries on from the menu bar. */
+  keepPlayingWhenClosed: boolean;
 }
 
 const KEY = 'lectern.prefs';
@@ -28,7 +37,12 @@ const defaults: Prefs = {
   smartRewind: 5,
   collapseSeries: false,
   librarySort: 'media.metadata.title',
-  librarySortDesc: false
+  librarySortDesc: false,
+  libraryView: 'grid',
+  perItemSpeed: true,
+  itemRates: {},
+  autoContinue: true,
+  keepPlayingWhenClosed: true
 };
 
 function load(): Prefs {

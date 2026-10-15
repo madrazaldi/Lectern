@@ -24,11 +24,29 @@
           "x": 20,
           "y": 26
         },
-        "backgroundColor": "#1B1922"
+        "backgroundColor": "#1B1922",
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost data: blob: http: https:",
+        "media-src": "'self' asset: http://asset.localhost blob: http: https:",
+        "connect-src": "'self' ipc: http://ipc.localhost http: https: ws: wss:",
+        "font-src": "'self' data:"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/downloads/**"
+        ]
+      },
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {

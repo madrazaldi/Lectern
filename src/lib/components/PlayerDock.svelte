@@ -12,11 +12,9 @@
   import VolumeControl from './VolumeControl.svelte';
 
   const item = $derived(player.item!);
-  const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (prefs.playbackRate || 1));
+  const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (player.rate || 1));
   const marks = $derived(player.episode ? [] : session.bookmarksFor(item.id));
-  const subtitle = $derived(
-    player.episode ? player.author : player.chapters.length > 1 && player.chapter ? player.chapter.title : player.author
-  );
+  const subtitle = $derived(player.episode ? player.author : player.chapters.length > 1 && player.chapter ? player.chapter.title : player.author);
 </script>
 
 <footer class="dock">
@@ -33,10 +31,10 @@
 
   <div class="center">
     <div class="controls">
-      <button class="icon-btn" onclick={() => player.prevChapter()} disabled={!player.session} aria-label="Previous chapter" title="Previous chapter">
+      <button class="icon-btn" onclick={() => player.prevChapter()} disabled={!player.ready} aria-label="Previous chapter" title="Previous chapter">
         <SkipBack size={17} />
       </button>
-      <button class="icon-btn skip" onclick={() => player.skip(-prefs.skipBack)} disabled={!player.session} aria-label="Back {prefs.skipBack} seconds">
+      <button class="icon-btn skip" onclick={() => player.skip(-prefs.skipBack)} disabled={!player.ready} aria-label="Back {prefs.skipBack} seconds">
         <SkipIcon seconds={prefs.skipBack} direction="back" size={24} />
       </button>
       <button class="main" onclick={() => player.toggle()} aria-label={player.isPlaying ? 'Pause' : 'Play'} disabled={player.status === 'loading'}>
@@ -48,10 +46,10 @@
           <Play size={20} fill="currentColor" strokeWidth={0} style="margin-left:2px" />
         {/if}
       </button>
-      <button class="icon-btn skip" onclick={() => player.skip(prefs.skipForward)} disabled={!player.session} aria-label="Forward {prefs.skipForward} seconds">
+      <button class="icon-btn skip" onclick={() => player.skip(prefs.skipForward)} disabled={!player.ready} aria-label="Forward {prefs.skipForward} seconds">
         <SkipIcon seconds={prefs.skipForward} direction="forward" size={24} />
       </button>
-      <button class="icon-btn" onclick={() => player.nextChapter()} disabled={!player.session} aria-label="Next chapter" title="Next chapter">
+      <button class="icon-btn" onclick={() => player.nextChapter()} disabled={!player.ready} aria-label="Next chapter" title="Next chapter">
         <SkipForward size={17} />
       </button>
     </div>

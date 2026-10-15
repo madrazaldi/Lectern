@@ -38,14 +38,7 @@
 </script>
 
 <div class="pop" bind:this={root}>
-  <button
-    class={triggerClass}
-    aria-label={label}
-    title={label}
-    aria-expanded={open}
-    aria-pressed={pressed}
-    onclick={() => (open = !open)}
-  >
+  <button class={triggerClass} aria-label={label} title={label} aria-expanded={open} aria-pressed={pressed} onclick={() => (open = !open)}>
     {@render trigger({ open })}
   </button>
   {#if open}
