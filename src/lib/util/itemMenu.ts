@@ -4,6 +4,7 @@ import { goto } from '$app/navigation';
 import * as abs from '$lib/api/abs';
 import type { LibraryItem, SeriesRef } from '$lib/api/types';
 import { isBook, isPodcast } from '$lib/api/types';
+import { hasAudio } from '$lib/components/reader/ebook';
 import { inTauri } from '$lib/native';
 import { downloads } from '$lib/stores/downloads.svelte';
 import { player } from '$lib/stores/player.svelte';
@@ -14,11 +15,12 @@ import { dialogs } from './dialogs.svelte';
 import { itemMenuRequest, registerItemAction, type ItemTarget } from './itemActions';
 import { playOrToggle, toggleFinished, toggleQueued } from './play';
 import './actions/podcasts';
+import './actions/reader';
 
 /** The episode a target plays: an explicit one, or a shelf's latest episode. Podcasts without one have nothing to play. */
 function playable(t: ItemTarget) {
   const episode = t.episode ?? t.item.recentEpisode ?? null;
-  if (t.item.collapsedSeries || (isPodcast(t.item) && !episode)) return null;
+  if (t.item.collapsedSeries || (isPodcast(t.item) && !episode) || !hasAudio(t.item)) return null;
   return { item: t.item, episode, episodeId: episode?.id ?? null };
 }
 

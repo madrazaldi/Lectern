@@ -1,11 +1,15 @@
 <script lang="ts">
+  import { BookOpenText, Check, CircleCheck } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
   import { encodeFilter } from '$lib/api/abs';
   import { coverUrl } from '$lib/api/client';
   import type { LibraryItem, PodcastMetadata, SeriesRef } from '$lib/api/types';
   import { isBook, isPodcast } from '$lib/api/types';
+  import { session } from '$lib/stores/session.svelte';
   import { duration } from '$lib/util/format';
+  import { toggleFinished } from '$lib/util/play';
   import Cover from './Cover.svelte';
+  import { canRead, ebookFormat, formatOf, hasAudio, otherEbooks, readHref } from './reader/ebook';
 
   /** The top of a title's page: cover, series, title, people and facts. Book or podcast specifics go in `children`. */
   let { item, children }: { item: LibraryItem; children?: Snippet } = $props();
@@ -18,6 +22,20 @@
     const s = book?.media.metadata.series;
     return !s ? [] : Array.isArray(s) ? s : [s];
   });
+
+  const audio = $derived(hasAudio(item));
+  const readable = $derived(canRead(item));
+  const format = $derived(ebookFormat(item));
+  const others = $derived(otherEbooks(item));
+  const progress = $derived(session.progressFor(item.id));
+  const readPct = $derived(progress?.ebookLocation ? Math.round((progress.ebookProgress ?? 0) * 100) : null);
+  let marking = $state(false);
+
+  async function finished() {
+    marking = true;
+    await toggleFinished(item.id);
+    marking = false;
+  }
 
   const narratorHref = (n: string) => `/library?filter=${encodeURIComponent(encodeFilter('narrators', n))}&label=${encodeURIComponent(`Read by ${n}`)}`;
 </script>
@@ -49,7 +67,7 @@
     </p>
 
     <dl class="facts">
-      {#if book}
+      {#if book && audio}
         <div>
           <dt>Length</dt>
           <dd class="num">{duration(book.media.duration)}</dd>
@@ -76,9 +94,41 @@
           <dt>Language</dt>
           <dd>{meta.language}</dd>
         </div>{/if}
+      {#if format}<div>
+          <dt>Ebook</dt>
+          <dd>{format.toUpperCase()}</dd>
+        </div>{/if}
     </dl>
 
-    {@render children?.()}
+    <!-- A book with no audio has nothing to play: its listening controls (children) give way to reading ones. -->
+    {#if book && !audio}
+      <div class="actions">
+        {#if readable}
+          <a class="btn btn-primary btn-lg" href={readHref(item.id)} class:disabled={item.isMissing} aria-disabled={item.isMissing}>
+            <BookOpenText size={18} />
+            {readPct !== null ? 'Continue reading' : 'Read'}
+          </a>
+        {/if}
+        <button class="btn btn-quiet btn-lg" onclick={finished} disabled={marking}>
+          {#if progress?.isFinished}<CircleCheck size={18} /> Finished{:else}<Check size={18} /> Mark as finished{/if}
+        </button>
+        {#if readPct !== null && !progress?.isFinished}<span class="where faint num">{readPct}% read</span>{/if}
+      </div>
+    {:else}
+      {@render children?.()}
+      {#if readable}
+        <p class="read">
+          <a class="btn btn-quiet" href={readHref(item.id)}><BookOpenText size={16} /> {readPct !== null ? 'Continue reading the ebook' : 'Read the ebook'}</a>
+          {#if readPct !== null}<span class="faint num">{readPct}% read</span>{/if}
+        </p>
+      {/if}
+    {/if}
+    {#if others.length}
+      <p class="others faint">
+        Also as
+        {#each others as f, i (f.ino)}{i ? ', ' : ' '}<a href={readHref(item.id, f.ino)} title={f.metadata.filename}>{formatOf(f).toUpperCase()}</a>{/each}
+      </p>
+    {/if}
   </div>
 </header>
 
@@ -165,6 +215,41 @@
     margin: 2px 0 0;
     font-size: var(--t-md);
     font-weight: 550;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 28px;
+  }
+  .actions .disabled {
+    pointer-events: none;
+    opacity: 0.5;
+  }
+  .where {
+    margin-left: 10px;
+    font-size: var(--t-sm);
+  }
+  .read {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+    font-size: var(--t-sm);
+  }
+  .others {
+    margin-top: 10px;
+    font-size: var(--t-sm);
+  }
+  .others a {
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .others a:hover {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   @media (max-width: 1180px) {
     .top {
