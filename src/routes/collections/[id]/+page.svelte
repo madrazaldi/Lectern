@@ -1,68 +1,65 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp, ListEnd, LoaderCircle, Pencil, Play, Trash2, X } from '@lucide/svelte';
+  import { ArrowDown, ArrowUp, ListEnd, Pencil, Play, Trash2, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import * as abs from '$lib/api/abs';
+  import type { PlaylistEntry } from '$lib/api/abs';
   import type { LibraryItem, Playlist } from '$lib/api/types';
-  import { isBook } from '$lib/api/types';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
   import ItemRow from '$lib/components/ItemRow.svelte';
+  import Loading from '$lib/components/Loading.svelte';
   import { player } from '$lib/stores/player.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { errorMessage, toast } from '$lib/stores/toast.svelte';
-  import type { QueueEntry } from '$lib/util/playback';
   import { plural, safeHtml } from '$lib/util/format';
+  import { queueEntry } from '$lib/util/play';
+  import { invalidate, resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
-  let name = $state('');
-  let description = $state<string | null>(null);
-  let items = $state<LibraryItem[] | null>(null);
-  let playlist = $state<Playlist | null>(null);
-  let error = $state<string | null>(null);
+  interface View {
+    name: string;
+    description: string | null;
+    items: LibraryItem[];
+    playlist: Playlist | null;
+  }
+
   let renaming = $state(false);
   let draftName = $state('');
   let confirmDelete = $state(false);
 
   const id = $derived(page.params.id!);
   const isPlaylist = $derived(page.url.searchParams.has('playlist'));
-  const editable = $derived(isPlaylist && !!playlist && playlist.userId === session.user?.id);
 
-  function fromPlaylist(p: Playlist) {
-    return p.items.map((i) => (i.episode ? { ...i.libraryItem, recentEpisode: i.episode } : i.libraryItem));
+  function fromPlaylist(p: Playlist): View {
+    const items = p.items.map((i) => (i.episode ? { ...i.libraryItem, recentEpisode: i.episode } : i.libraryItem));
+    return { name: p.name, description: p.description ?? null, items, playlist: p };
   }
 
+  const res = resource(() => ({ id, playlist: isPlaylist }), {
+    id: (k) => `${k.playlist ? 'playlist' : 'collection'}:${k.id}`,
+    load: async (k): Promise<View> => {
+      if (k.playlist) return fromPlaylist(await abs.getPlaylist(k.id));
+      const c = await abs.getCollection(k.id);
+      return { name: c.name, description: c.description ?? null, items: c.books, playlist: null };
+    }
+  });
+  const view = $derived(res.data);
+  const items = $derived(view?.items);
+  const playlist = $derived(view?.playlist ?? null);
+  const name = $derived(view?.name ?? '');
+  const editable = $derived(!!playlist && playlist.userId === session.user?.id);
+
+  // Another collection: start without a half-finished rename or delete prompt.
   $effect(() => {
-    const current = id;
-    items = null;
-    playlist = null;
+    void id;
     renaming = false;
     confirmDelete = false;
-    const load = isPlaylist
-      ? abs.getPlaylist(current).then((p) => {
-          playlist = p;
-          return { name: p.name, description: p.description, items: fromPlaylist(p) };
-        })
-      : abs.getCollection(current).then((c) => ({ name: c.name, description: c.description, items: c.books }));
-    load
-      .then((r) => {
-        if (current !== id) return;
-        name = r.name;
-        description = r.description;
-        items = r.items;
-      })
-      .catch((err) => (error = err.message));
   });
 
-  function entries(): QueueEntry[] {
-    return (items ?? [])
-      .filter((i) => !i.isMissing)
-      .map((i) => ({
-        itemId: i.id,
-        episodeId: i.recentEpisode?.id ?? null,
-        title: i.recentEpisode?.title ?? i.media.metadata.title,
-        subtitle: i.recentEpisode ? i.media.metadata.title : isBook(i) ? (i.media.metadata.authorName ?? '') : '',
-        updatedAt: i.updatedAt
-      }));
+  function entries() {
+    return (items ?? []).filter((i) => !i.isMissing).map((i) => queueEntry(i, i.recentEpisode ?? null));
   }
 
   function playAll() {
@@ -75,12 +72,16 @@
     toast(`Added ${plural(all.length, 'title')} to Up Next.`);
   }
 
+  // The answer applies only if it's still the playlist on screen.
+  function show(p: Playlist) {
+    invalidate('collections:');
+    if (res.key?.id === p.id) res.mutate(fromPlaylist(p));
+  }
+
   async function save(patch: Parameters<typeof abs.updatePlaylist>[1]) {
     if (!playlist) return;
     try {
-      playlist = await abs.updatePlaylist(playlist.id, patch);
-      name = playlist.name;
-      items = fromPlaylist(playlist);
+      show(await abs.updatePlaylist(playlist.id, patch));
     } catch (err) {
       toast(`Couldn't update the playlist. ${errorMessage(err)}`, { tone: 'error' });
     }
@@ -93,9 +94,11 @@
     if (n && n !== name) void save({ name: n });
   }
 
+  const entryOf = (i: Playlist['items'][number]): PlaylistEntry => ({ libraryItemId: i.libraryItemId, episodeId: i.episodeId });
+
   function move(index: number, by: number) {
     if (!playlist) return;
-    const list = playlist.items.map((i) => ({ libraryItemId: i.libraryItemId, episodeId: i.episodeId }));
+    const list = playlist.items.map(entryOf);
     const to = index + by;
     if (to < 0 || to >= list.length) return;
     [list[index], list[to]] = [list[to], list[index]];
@@ -104,14 +107,31 @@
 
   async function remove(index: number) {
     if (!playlist) return;
-    const entry = playlist.items[index];
+    // Removing the last entry deletes the playlist on the server, so that one asks first instead.
     if (playlist.items.length === 1) {
       confirmDelete = true;
       return;
     }
+    const pid = playlist.id;
+    const order = playlist.items.map(entryOf);
+    const entry = order[index];
+    const title = items?.[index]?.recentEpisode?.title ?? items?.[index]?.media.metadata.title ?? 'Title';
     try {
-      playlist = await abs.removeFromPlaylist(playlist.id, entry);
-      items = fromPlaylist(playlist);
+      show(await abs.removeFromPlaylist(pid, entry));
+      toast(`Removed ${title} from ${name}.`, {
+        action: {
+          label: 'Undo',
+          run: async () => {
+            try {
+              // Adding appends; the PATCH then puts it back where it was.
+              await abs.addToPlaylist(pid, entry);
+              show(await abs.updatePlaylist(pid, { items: order }));
+            } catch (err) {
+              toast(`Couldn't put it back. ${errorMessage(err)}`, { tone: 'error' });
+            }
+          }
+        }
+      });
     } catch (err) {
       toast(`Couldn't remove it. ${errorMessage(err)}`, { tone: 'error' });
     }
@@ -121,6 +141,8 @@
     if (!playlist) return;
     try {
       await abs.deletePlaylist(playlist.id);
+      invalidate('collections:');
+      invalidate(`playlist:${playlist.id}`);
       toast(`Deleted ${name}.`);
       void goto('/collections');
     } catch (err) {
@@ -129,10 +151,14 @@
   }
 </script>
 
-{#if error}
-  <div class="page"><EmptyState title="Couldn't open this collection"><p>{error}</p></EmptyState></div>
-{:else if !items}
-  <div class="loading"><LoaderCircle size={26} class="spin" /></div>
+<svelte:head><title>{pageTitle(name || (isPlaylist ? 'Playlist' : 'Collection'))}</title></svelte:head>
+
+{#if res.error}
+  <div class="page">
+    <ErrorState title="Couldn't open this {isPlaylist ? 'playlist' : 'collection'}" message={res.error} cause={res.cause} onretry={() => res.refresh()} />
+  </div>
+{:else if !view || !items}
+  <Loading label="Loading {isPlaylist ? 'playlist' : 'collection'}" />
 {:else}
   <div class="page">
     <header>
@@ -158,7 +184,7 @@
         </h1>
       {/if}
       <p class="faint meta">{isPlaylist ? 'Playlist, ' : ''}{plural(items.length, isPlaylist ? 'item' : 'book')}</p>
-      {#if description}<div class="desc serif">{@html safeHtml(description)}</div>{/if}
+      {#if view.description}<div class="desc serif">{@html safeHtml(view.description)}</div>{/if}
       {#if items.length}
         <div class="actions">
           <button class="btn btn-primary" onclick={playAll}><Play size={16} fill="currentColor" strokeWidth={0} /> Play all</button>
@@ -202,12 +228,6 @@
 {/if}
 
 <style>
-  .loading {
-    display: grid;
-    place-items: center;
-    height: 60vh;
-    color: var(--text-3);
-  }
   h1 {
     display: flex;
     align-items: center;

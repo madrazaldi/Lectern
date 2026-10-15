@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
+  import { scrollBehavior } from '$lib/util/motion';
 
   interface Props {
     title: string;
@@ -22,7 +23,7 @@
   }
 
   function page(dir: number) {
-    row.scrollBy({ left: dir * row.clientWidth * 0.85, behavior: 'smooth' });
+    row.scrollBy({ left: dir * row.clientWidth * 0.85, behavior: scrollBehavior() });
   }
 
   $effect(() => {

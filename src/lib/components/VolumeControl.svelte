@@ -2,18 +2,11 @@
   import { Volume, Volume1, Volume2, VolumeX } from '@lucide/svelte';
   import { player } from '$lib/stores/player.svelte';
   import { prefs } from '$lib/stores/prefs.svelte';
-
-  let before = 1;
-  function toggleMute() {
-    if (prefs.volume > 0) {
-      before = prefs.volume;
-      player.setVolume(0);
-    } else player.setVolume(before || 1);
-  }
+  import { toggleMute } from '$lib/util/play';
 </script>
 
 <div class="vol">
-  <button class="icon-btn" onclick={toggleMute} aria-label={prefs.volume ? 'Mute' : 'Unmute'} title={prefs.volume ? 'Mute' : 'Unmute'}>
+  <button class="icon-btn" onclick={toggleMute} aria-label={prefs.volume ? 'Mute' : 'Unmute'} title={prefs.volume ? 'Mute (M)' : 'Unmute (M)'}>
     {#if prefs.volume === 0}<VolumeX size={18} />{:else if prefs.volume < 0.34}<Volume size={18} />{:else if prefs.volume < 0.67}<Volume1
         size={18}
       />{:else}<Volume2 size={18} />{/if}
@@ -27,6 +20,7 @@
     style:--v="{prefs.volume * 100}%"
     oninput={(e) => player.setVolume(+e.currentTarget.value)}
     aria-label="Volume"
+    aria-valuetext="{Math.round(prefs.volume * 100)}%"
   />
 </div>
 

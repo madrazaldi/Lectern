@@ -7,7 +7,12 @@
   import { player } from '$lib/stores/player.svelte';
   import { prefs, type Theme } from '$lib/stores/prefs.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import ShortcutList from '$lib/components/ShortcutList.svelte';
+  import { dialogs } from '$lib/util/dialogs.svelte';
   import { bytes } from '$lib/util/format';
+  import { roving } from '$lib/util/roving';
+  import { isMacPlatform, modLabel } from '$lib/util/shortcuts';
+  import { pageTitle } from '$lib/util/title';
 
   const creds = getCredentials();
   const accounts = listAccounts();
@@ -28,19 +33,6 @@
     { value: 'system', label: 'Match system' },
     { value: 'dark', label: 'Dark' },
     { value: 'light', label: 'Light' }
-  ];
-
-  const shortcuts = [
-    ['Space', 'Play or pause'],
-    ['← / →', 'Skip back / forward'],
-    ['⇧← / ⇧→', 'Previous / next chapter'],
-    ['F', 'Open or close Now Playing'],
-    ['B', 'Add a bookmark'],
-    ['↑ / ↓', 'Change speed (in Now Playing)'],
-    ['⌘K or /', 'Search'],
-    ['⌘1 … ⌘7', 'Home, Library, Series, Authors, Collections, Downloads, Listening'],
-    ['⌘[ / ⌘]', 'Back / forward'],
-    ['⌘,', 'Settings']
   ];
 
   function host(url: string) {
@@ -64,6 +56,8 @@
     location.reload();
   }
 </script>
+
+<svelte:head><title>{pageTitle('Settings')}</title></svelte:head>
 
 <div class="page narrow">
   <h1 class="page-title">Settings</h1>
@@ -115,7 +109,7 @@
       <div class="label">
         <span>Theme</span>
       </div>
-      <div class="seg" role="radiogroup" aria-label="Theme">
+      <div class="seg" role="radiogroup" aria-label="Theme" {@attach roving()}>
         {#each themes as t (t.value)}
           <button role="radio" aria-checked={prefs.theme === t.value} onclick={() => (prefs.theme = t.value)}>{t.label}</button>
         {/each}
@@ -189,7 +183,7 @@
       <label class="row">
         <div class="label">
           <span>Keep playing when the window is closed</span>
-          <small>Closing the window hides it; playback carries on and the menu bar icon controls it. Quit with ⌘Q.</small>
+          <small>Closing the window hides it; playback carries on and the menu bar icon controls it. Quit with {modLabel(isMacPlatform())}Q.</small>
         </div>
         <input type="checkbox" class="switch" bind:checked={prefs.keepPlayingWhenClosed} />
       </label>
@@ -216,15 +210,11 @@
   {/if}
 
   <section>
-    <h2 class="serif">Keyboard shortcuts</h2>
-    <dl class="keys">
-      {#each shortcuts as [k, v] (k)}
-        <div>
-          <dt><kbd>{k}</kbd></dt>
-          <dd>{v}</dd>
-        </div>
-      {/each}
-    </dl>
+    <div class="sec-head">
+      <h2 class="serif">Keyboard shortcuts</h2>
+      <button class="link" onclick={() => (dialogs.shortcuts = true)}>Show anywhere with <kbd>?</kbd></button>
+    </div>
+    <ShortcutList />
   </section>
 
   <p class="version faint">Lectern {APP_VERSION}</p>
@@ -369,9 +359,14 @@
     margin: 40px 0 0;
     font-size: var(--t-xs);
   }
-  .keys > div {
-    grid-template-columns: 140px 1fr;
-    border-bottom: 1px solid var(--rule-soft);
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .sec-head .link {
+    font-size: var(--t-sm);
   }
   kbd {
     font-family: var(--font-sans);

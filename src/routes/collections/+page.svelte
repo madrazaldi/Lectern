@@ -1,18 +1,27 @@
 <script lang="ts">
   import { Plus } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import * as abs from '$lib/api/abs';
-  import type { Collection, Playlist } from '$lib/api/types';
   import Cover from '$lib/components/Cover.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
+  import Loading from '$lib/components/Loading.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { errorMessage, toast } from '$lib/stores/toast.svelte';
   import { plural } from '$lib/util/format';
+  import { invalidate, resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
-  let collections = $state<Collection[] | null>(null);
-  let playlists = $state<Playlist[]>([]);
-  let error = $state<string | null>(null);
+  const res = resource(() => session.library!.id, {
+    id: (k) => `collections:${k}`,
+    load: async (k) => {
+      // Playlists are a nice-to-have here; a failure there shouldn't hide the collections.
+      const [collections, playlists] = await Promise.all([abs.getCollections(k), abs.getPlaylists(k).catch(() => [])]);
+      return { collections, playlists };
+    }
+  });
+  const collections = $derived(res.data?.collections ?? []);
+  const playlists = $derived(res.data?.playlists ?? []);
   let creating = $state(false);
   let newName = $state('');
 
@@ -22,24 +31,15 @@
     if (!name) return;
     try {
       const p = await abs.createPlaylist(session.library!.id, name);
+      invalidate('collections:');
       void goto(`/collections/${p.id}?playlist=1`);
     } catch (err) {
       toast(`Couldn't create the playlist. ${errorMessage(err)}`, { tone: 'error' });
     }
   }
-
-  onMount(() => {
-    const lib = session.library!.id;
-    abs
-      .getCollections(lib)
-      .then((c) => (collections = c))
-      .catch((err) => (error = err.message));
-    abs
-      .getPlaylists(lib)
-      .then((p) => (playlists = p))
-      .catch(() => {});
-  });
 </script>
+
+<svelte:head><title>{pageTitle('Collections')}</title></svelte:head>
 
 <div class="page">
   <header class="head">
@@ -56,15 +56,17 @@
     {/if}
   </header>
 
-  {#if error}
-    <EmptyState title="Couldn't load collections"><p>{error}</p></EmptyState>
-  {:else if collections && !collections.length && !playlists.length}
+  {#if res.error}
+    <ErrorState title="Couldn't load collections" message={res.error} cause={res.cause} onretry={() => res.refresh()} />
+  {:else if !res.data}
+    <Loading label="Loading collections" />
+  {:else if !collections.length && !playlists.length}
     <EmptyState title="No collections yet">
       <p>Collections are hand-picked groups of books, made in the Audiobookshelf web app. Your playlists show up here too.</p>
     </EmptyState>
   {:else}
     <div class="grid">
-      {#each collections ?? [] as c (c.id)}
+      {#each collections as c (c.id)}
         <a class="coll" href="/collections/{c.id}">
           <div class="mosaic">
             {#each c.books.slice(0, 4) as b (b.id)}

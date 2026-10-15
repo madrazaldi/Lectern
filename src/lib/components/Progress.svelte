@@ -1,10 +1,26 @@
 <script lang="ts">
   /** Thin progress rule shown under covers. */
-  let { value, finished = false }: { value: number; finished?: boolean } = $props();
+  interface Props {
+    value: number;
+    finished?: boolean;
+    /** Accessible name, e.g. "Listening progress" or "Download progress". */
+    label?: string;
+  }
+  let { value, finished = false, label = 'Listening progress' }: Props = $props();
+  const pct = $derived(Math.round(Math.min(1, Math.max(0, finished ? 1 : value)) * 100));
 </script>
 
-<div class="track" class:finished role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)}>
-  <div class="fill" style:width="{Math.min(1, Math.max(0, finished ? 1 : value)) * 100}%"></div>
+<div
+  class="track"
+  class:finished
+  role="progressbar"
+  aria-label={label}
+  aria-valuemin={0}
+  aria-valuemax={100}
+  aria-valuenow={pct}
+  aria-valuetext={finished ? 'Finished' : `${pct}%`}
+>
+  <div class="fill" style:width="{pct}%"></div>
 </div>
 
 <style>

@@ -1,39 +1,34 @@
 <script lang="ts">
-  import { LoaderCircle } from '@lucide/svelte';
   import { page } from '$app/state';
   import * as abs from '$lib/api/abs';
-  import type { SearchResults } from '$lib/api/types';
   import AuthorCard from '$lib/components/AuthorCard.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
+  import Loading from '$lib/components/Loading.svelte';
   import SeriesCard from '$lib/components/SeriesCard.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { isMacPlatform, modLabel } from '$lib/util/shortcuts';
+  import { resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
-  const q = $derived(page.url.searchParams.get('q') ?? '');
-  let results = $state<SearchResults | null>(null);
-  let loading = $state(false);
-  let error = $state<string | null>(null);
+  // The server answers at most this many of each kind; hitting it means there may be more.
+  const CAP = 12;
 
-  $effect(() => {
-    const term = q.trim();
-    if (!term) {
-      results = null;
-      return;
-    }
-    const ctrl = new AbortController();
-    loading = true;
-    error = null;
-    abs
-      .search(session.library!.id, term, ctrl.signal)
-      .then((r) => (results = r))
-      .catch((err) => {
-        if (err?.name !== 'AbortError') error = err.message;
-      })
-      .finally(() => (loading = false));
-    return () => ctrl.abort();
+  const q = $derived((page.url.searchParams.get('q') ?? '').trim());
+  const library = session.library!;
+
+  const res = resource(() => (q ? { library: library.id, q } : null), {
+    id: (k) => `search:${k.library}:${k.q}`,
+    load: (k, signal) => abs.search(k.library, k.q, signal)
   });
+  const results = $derived(res.data);
 
-  const items = $derived([...(results?.book ?? []), ...(results?.podcast ?? [])].map((r) => r.libraryItem));
+  const books = $derived(results?.book ?? []);
+  const podcasts = $derived(results?.podcast ?? []);
+  const items = $derived([...books, ...podcasts].map((r) => r.libraryItem));
+  const moreTitles = $derived(books.length >= CAP || podcasts.length >= CAP);
+  const moreAuthors = $derived((results?.authors?.length ?? 0) >= CAP);
   const count = $derived(
     items.length +
       (results?.series?.length ?? 0) +
@@ -44,26 +39,33 @@
   );
 </script>
 
+<svelte:head><title>{pageTitle(q ? `“${q}”` : 'Search')}</title></svelte:head>
+
 <div class="page">
   <h1 class="page-title">
     {#if q}Results for “{q}”{:else}Search{/if}
-    {#if loading}<LoaderCircle size={20} class="spin" />{/if}
+    {#if res.loading && results}<Loading inline size={20} label="Searching" />{/if}
   </h1>
 
   {#if !q}
     <EmptyState title="Find something to listen to">
-      <p>Search by title, author, narrator, series, genre or tag. Press ⌘K from anywhere.</p>
+      <p>Search by title, author, narrator, series, genre or tag. Press {modLabel(isMacPlatform())}K from anywhere.</p>
     </EmptyState>
-  {:else if error}
-    <EmptyState title="Search failed"><p>{error}</p></EmptyState>
-  {:else if results && !count}
+  {:else if res.error}
+    <ErrorState title="Search failed" message={res.error} cause={res.cause} onretry={() => res.refresh()} />
+  {:else if !results}
+    <Loading label="Searching" />
+  {:else if !count}
     <EmptyState title="No matches">
       <p>Nothing in {session.library?.name} matches “{q}”. Check the spelling, or try an author or series name.</p>
     </EmptyState>
-  {:else if results}
+  {:else}
     {#if items.length}
       <section>
-        <h2 class="serif">Titles</h2>
+        <div class="sec-head">
+          <h2 class="serif">Titles</h2>
+          {#if moreTitles}<a class="all" href="/library?q={encodeURIComponent(q)}">See all in library</a>{/if}
+        </div>
         <div class="grid">
           {#each items as item (item.id)}<ItemCard {item} />{/each}
         </div>
@@ -79,7 +81,10 @@
     {/if}
     {#if results.authors?.length}
       <section>
-        <h2 class="serif">Authors</h2>
+        <div class="sec-head">
+          <h2 class="serif">Authors</h2>
+          {#if moreAuthors}<a class="all" href="/authors?q={encodeURIComponent(q)}">See all authors</a>{/if}
+        </div>
         <div class="grid authors">
           {#each results.authors as a (a.id)}<AuthorCard author={a} />{/each}
         </div>
@@ -123,6 +128,17 @@
     font-size: var(--t-xl);
     font-weight: 600;
     margin-bottom: 16px;
+  }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .all {
+    font-size: var(--t-sm);
+    font-weight: 650;
+    color: var(--accent);
   }
   .grid {
     display: grid;

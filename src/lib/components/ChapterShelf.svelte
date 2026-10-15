@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Chapter } from '$lib/api/types';
+  import { prefs } from '$lib/stores/prefs.svelte';
   import { findChapter } from '$lib/util/playback';
   import { clock } from '$lib/util/format';
 
@@ -23,6 +24,9 @@
   let shelfWidth = $state(0);
   let hoverX = $state<number | null>(null);
   let dragTime = $state<number | null>(null);
+  /** Set briefly after a keyboard seek, so the announced position is exact while someone is seeking. */
+  let seeking = $state(false);
+  let seekTimer: ReturnType<typeof setTimeout> | undefined;
 
   const shown = $derived(dragTime ?? time);
   const current = $derived(findChapter(chapters, shown));
@@ -103,10 +107,10 @@
 
   function onKey(e: KeyboardEvent) {
     if (disabled) return;
-    const step = e.shiftKey ? 60 : 10;
+    // The same steps as the skip buttons; Shift for a minute at a time.
     let t: number | null = null;
-    if (e.key === 'ArrowRight') t = time + step;
-    else if (e.key === 'ArrowLeft') t = time - step;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') t = time + (e.shiftKey ? 60 : prefs.skipForward);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') t = time - (e.shiftKey ? 60 : prefs.skipBack);
     else if (e.key === 'PageDown') t = chapters[current + 1]?.start ?? null;
     else if (e.key === 'PageUp') t = chapters[Math.max(0, current - 1)]?.start ?? null;
     else if (e.key === 'Home') t = 0;
@@ -114,9 +118,19 @@
     if (t !== null) {
       e.preventDefault();
       e.stopPropagation();
+      seeking = true;
+      clearTimeout(seekTimer);
+      seekTimer = setTimeout(() => (seeking = false), 2000);
       onseek(Math.max(0, Math.min(duration, t)));
     }
   }
+
+  $effect(() => () => clearTimeout(seekTimer));
+
+  // Playback moves the position every quarter second; screen readers re-announce a focused slider's value on
+  // every change. Only expose whole minutes unless the listener is seeking with the keyboard.
+  const spoken = $derived(seeking ? time : Math.floor(time / 60) * 60);
+  const spokenChapter = $derived(chapters[findChapter(chapters, spoken)]);
 
   const hoverTime = $derived(hoverX !== null ? timeAtX(hoverX) : null);
   const hoverChapter = $derived(hoverTime !== null ? chapters[findChapter(chapters, hoverTime)] : null);
@@ -134,8 +148,8 @@
   aria-label="Position"
   aria-valuemin={0}
   aria-valuemax={Math.round(duration)}
-  aria-valuenow={Math.round(time)}
-  aria-valuetext="{clock(time)} of {clock(duration)}{chapters[current] ? `, ${chapters[current].title}` : ''}"
+  aria-valuenow={Math.round(spoken)}
+  aria-valuetext="{clock(spoken)} of {clock(duration)}{spokenChapter && chapters.length > 1 ? `, ${spokenChapter.title}` : ''}"
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}

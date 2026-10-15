@@ -1,22 +1,47 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import * as abs from '$lib/api/abs';
   import type { Author } from '$lib/api/types';
   import AuthorCard from '$lib/components/AuthorCard.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
+  import Loading from '$lib/components/Loading.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
-  let authors = $state<Author[] | null>(null);
-  let error = $state<string | null>(null);
   let sort = $state<'name' | 'lastFirst' | 'numBooks'>('name');
-  let query = $state('');
 
-  onMount(() => {
-    abs
-      .getAuthors(session.library!.id)
-      .then((a) => (authors = a))
-      .catch((err) => (error = err.message));
+  const res = resource(() => session.library!.id, {
+    id: (k) => `authors:${k}`,
+    load: (k) => abs.getAuthors(k)
   });
+  const authors = $derived(res.data);
+
+  // The filter text is in the URL (search links here with ?q=) and follows it on Back.
+  const term = $derived(page.url.searchParams.get('q') ?? '');
+  let query = $state(untrack(() => page.url.searchParams.get('q') ?? ''));
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const t = term;
+    untrack(() => {
+      if (t.trim() !== query.trim()) query = t;
+    });
+  });
+  $effect(() => () => clearTimeout(debounce));
+
+  function onInput() {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      const url = new URL(page.url);
+      const q = query.trim();
+      if (q) url.searchParams.set('q', q);
+      else url.searchParams.delete('q');
+      void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
+    }, 250);
+  }
 
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -27,12 +52,14 @@
   });
 </script>
 
+<svelte:head><title>{pageTitle('Authors')}</title></svelte:head>
+
 <div class="page">
   <header class="head">
     <h1 class="page-title">Authors</h1>
     {#if authors}<span class="faint num">{authors.length}</span>{/if}
     <div class="spacer"></div>
-    <input class="field filter" bind:value={query} placeholder="Filter authors" aria-label="Filter authors" />
+    <input class="field filter" type="search" bind:value={query} oninput={onInput} placeholder="Filter authors" aria-label="Filter authors" />
     <select class="select" bind:value={sort} aria-label="Sort authors by">
       <option value="name">First name</option>
       <option value="lastFirst">Last name</option>
@@ -40,10 +67,12 @@
     </select>
   </header>
 
-  {#if error}
-    <EmptyState title="Couldn't load authors"><p>{error}</p></EmptyState>
-  {:else if authors && !shown.length}
-    <EmptyState title={query ? 'No authors match' : 'No authors yet'} />
+  {#if res.error}
+    <ErrorState title="Couldn't load authors" message={res.error} cause={res.cause} onretry={() => res.refresh()} />
+  {:else if !authors}
+    <Loading label="Loading authors" />
+  {:else if !shown.length}
+    <EmptyState title={query.trim() ? 'No authors match' : 'No authors yet'} />
   {:else}
     <div class="grid">
       {#each shown as a (a.id)}<AuthorCard author={a} />{/each}

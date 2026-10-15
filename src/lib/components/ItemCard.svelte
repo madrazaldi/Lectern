@@ -1,9 +1,8 @@
 <script lang="ts">
   import { Check, Pause, Play } from '@lucide/svelte';
-  import type { LibraryItem, PodcastMetadata } from '$lib/api/types';
-  import { isBook, isPodcast } from '$lib/api/types';
-  import { player } from '$lib/stores/player.svelte';
-  import { session } from '$lib/stores/session.svelte';
+  import type { LibraryItem } from '$lib/api/types';
+  import { itemMenuFor } from '$lib/util/itemMenu';
+  import { ItemView } from '$lib/util/itemView.svelte';
   import Cover from './Cover.svelte';
   import Progress from './Progress.svelte';
 
@@ -14,56 +13,41 @@
   }
   let { item, showSequence = false }: Props = $props();
 
-  const meta = $derived(item.media.metadata);
-  const series = $derived(item.collapsedSeries);
-  const episode = $derived(item.recentEpisode ?? null);
-  const href = $derived(series ? `/series/${series.id}` : `/item/${item.id}`);
-  const title = $derived(series ? series.name : (episode?.title ?? meta.title));
+  const v = new ItemView(() => item);
   const byline = $derived.by(() => {
-    if (series) return `${series.numBooks} books`;
-    if (episode) return meta.title;
+    if (v.series) return `${v.series.numBooks} books`;
+    if (v.episode) return item.media.metadata.title;
     if (showSequence && item.sequence) return `Book ${item.sequence}`;
-    if (isBook(item)) return item.media.metadata.authorName ?? '';
-    return (item.media.metadata as PodcastMetadata).author ?? '';
+    return v.author;
   });
-  const progress = $derived(series ? undefined : session.progressFor(item.id, episode?.id));
-  const current = $derived(!series && player.isCurrent(item.id, episode?.id));
-  const playing = $derived(current && player.isPlaying);
-  const canPlay = $derived(!series && (!isPodcast(item) || !!episode) && !item.isMissing);
-
-  function onPlay(e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (current) player.toggle();
-    else void player.play(item.id, episode?.id ?? null);
-  }
 </script>
 
-<a class="card" {href} class:series={!!series} class:current draggable="false">
+<!-- The title link stretches over the whole card; Play sits beside it (never inside a link). -->
+<div class="card stretch-host" class:series={!!v.series} class:current={v.current} {@attach itemMenuFor(() => ({ item }))}>
   <div class="art">
-    {#if series}
+    {#if v.series}
       <span class="sheet s2" aria-hidden="true"></span>
       <span class="sheet s1" aria-hidden="true"></span>
     {/if}
-    <Cover itemId={item.id} {title} author={byline} updatedAt={item.updatedAt} hasCover={!!item.media.coverPath} width={360} />
-    {#if progress?.isFinished}
-      <span class="badge" title="Finished"><Check size={13} strokeWidth={3} /></span>
+    <Cover itemId={item.id} title={v.title} author={byline} updatedAt={item.updatedAt} hasCover={!!item.media.coverPath} width={360} />
+    {#if v.progress?.isFinished}
+      <span class="badge" title="Finished"><Check size={13} strokeWidth={3} /><span class="sr-only">Finished</span></span>
     {/if}
-    {#if canPlay}
-      <button class="play" class:on={playing} onclick={onPlay} aria-label={playing ? `Pause ${title}` : `Play ${title}`}>
-        {#if playing}<Pause size={18} fill="currentColor" strokeWidth={0} />{:else}<Play size={18} fill="currentColor" strokeWidth={0} />{/if}
+    {#if v.canPlay}
+      <button class="play" class:on={v.playing} onclick={v.play} aria-label={v.playLabel}>
+        {#if v.playing}<Pause size={18} fill="currentColor" strokeWidth={0} />{:else}<Play size={18} fill="currentColor" strokeWidth={0} />{/if}
       </button>
     {/if}
   </div>
   <!-- Always reserve the rule's space so titles line up across a shelf. -->
   <div class="prog">
-    {#if progress && !progress.isFinished && progress.progress > 0}<Progress value={progress.progress} />{/if}
+    {#if v.progress && !v.progress.isFinished && v.progress.progress > 0}<Progress value={v.progress.progress} label="{v.title}: listened" />{/if}
   </div>
   <div class="text">
-    <span class="title">{title}</span>
+    <a class="title stretched" href={v.href} draggable="false">{v.title}</a>
     {#if byline}<span class="by">{byline}</span>{/if}
   </div>
-</a>
+</div>
 
 <style>
   .card {
@@ -108,6 +92,7 @@
   }
   .play {
     position: absolute;
+    z-index: 2;
     right: 10px;
     bottom: 10px;
     display: grid;
@@ -131,8 +116,7 @@
     margin-left: 0;
   }
   .card:hover .play,
-  .card:focus-visible .play,
-  .play:focus-visible,
+  .card:focus-within .play,
   .play.on {
     opacity: 1;
     transform: none;

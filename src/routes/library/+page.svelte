@@ -1,13 +1,24 @@
+<script module lang="ts">
+  import type { LibraryItem } from '$lib/api/types';
+  import { pagedCache } from '$lib/util/paged.svelte';
+
+  // Loaded pages per query outlive the page, so Back lands on the same list (and the layout can restore the scroll).
+  const lists = pagedCache<LibraryItem>();
+  // One shuffle order per library for the session, until "Shuffle again".
+  const seeds = new Map<string, number>();
+</script>
+
 <script lang="ts">
-  import { ArrowDownWideNarrow, ArrowUpNarrowWide, LayoutGrid, Layers, List, Search, X } from '@lucide/svelte';
+  import { ArrowDownWideNarrow, ArrowUpNarrowWide, LayoutGrid, Layers, List, Search, Shuffle, X } from '@lucide/svelte';
   import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import * as abs from '$lib/api/abs';
   import { request } from '$lib/api/client';
-  import type { FilterData, LibraryItem, SearchResults } from '$lib/api/types';
+  import type { FilterData, SearchResults } from '$lib/api/types';
   import CardSkeleton from '$lib/components/CardSkeleton.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
   import FilterMenu from '$lib/components/FilterMenu.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
   import ItemRow from '$lib/components/ItemRow.svelte';
@@ -16,6 +27,11 @@
   import { prefs } from '$lib/stores/prefs.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { plural } from '$lib/util/format';
+  import { PagedList } from '$lib/util/paged.svelte';
+  import { resource } from '$lib/util/resource.svelte';
+  import { roving } from '$lib/util/roving';
+  import { newSeed, shuffled } from '$lib/util/shuffle';
+  import { pageTitle } from '$lib/util/title';
 
   const PAGE = 60;
   const library = session.library!;
@@ -45,35 +61,115 @@
     { value: 'finished', label: 'Finished' }
   ];
 
-  let items = $state<LibraryItem[]>([]);
-  let total = $state<number | null>(null);
-  let loading = $state(false);
-  let error = $state<string | null>(null);
-  let nextPage = 0;
-  let generation = 0;
-  let filterData = $state<FilterData | null>(null);
-
-  // Title search: `query` is the box, `term` is what's been settled on and sent to the server.
-  let query = $state('');
-  let term = $state('');
-  let found = $state<LibraryItem[]>([]);
-  let finding = $state(false);
-  let findError = $state<string | null>(null);
-  let findNonce = $state(0);
-  let debounce: ReturnType<typeof setTimeout> | undefined;
-
-  // Filters live in the URL so other pages can link straight into a filtered view.
-  const filter = $derived(page.url.searchParams.get('filter') ?? '');
-  const filterLabel = $derived(page.url.searchParams.get('label') ?? '');
-  const progressValue = $derived(filter.startsWith('progress.') ? atob(filter.slice(9)) : '');
-  const sort = $derived(sorts.some((s) => s.value === prefs.librarySort) ? prefs.librarySort : 'media.metadata.title');
-  const searching = $derived(term !== '');
-  const list = $derived(prefs.libraryView === 'list');
-  const shown = $derived(searching ? found : items);
-  const count = $derived(searching ? (finding || findError ? null : found.length) : total);
-  const collapsing = $derived(isBooks && prefs.collapseSeries && !filter && !searching);
+  interface Query {
+    library: string;
+    filter: string;
+    sort: string;
+    desc: boolean;
+    collapse: boolean;
+    seed: number | null;
+  }
 
   const keyOf = (it: LibraryItem) => it.collapsedSeries?.id ?? it.id;
+
+  const list = new PagedList<Query, LibraryItem>({
+    cache: lists,
+    key: keyOf,
+    fetch: async (q, n, signal) => {
+      const base = { filter: q.filter || undefined, collapseseries: q.collapse };
+      if (q.seed !== null) {
+        // The server reshuffles on every request, so paging through sort=random repeats some titles and skips
+        // others. Take the whole filtered set once and shuffle it here; the seed keeps the order for Back.
+        const all = await abs.getLibraryItems(q.library, { ...base, sort: 'media.metadata.title', limit: 0 }, signal);
+        return { results: shuffled(all.results, q.seed), total: all.results.length };
+      }
+      return abs.getLibraryItems(q.library, { ...base, sort: q.sort, desc: q.desc, page: n, limit: PAGE }, signal);
+    }
+  });
+
+  let filterData = $state<FilterData | null>(null);
+  const initialSeed = seeds.get(library.id) ?? newSeed();
+  seeds.set(library.id, initialSeed);
+  let seed = $state(initialSeed);
+
+  // Filters and the title search live in the URL: other pages link straight into a filtered view, and Back restores both.
+  const filter = $derived(page.url.searchParams.get('filter') ?? '');
+  const filterLabel = $derived(page.url.searchParams.get('label') ?? '');
+  const term = $derived((page.url.searchParams.get('q') ?? '').trim());
+  const progressValue = $derived(filter.startsWith('progress.') ? atob(filter.slice(9)) : '');
+  const sort = $derived(sorts.some((s) => s.value === prefs.librarySort) ? prefs.librarySort : 'media.metadata.title');
+  const shuffling = $derived(sort === 'random');
+  const searching = $derived(term !== '');
+  const listView = $derived(prefs.libraryView === 'list');
+  const collapsing = $derived(isBooks && prefs.collapseSeries && !filter && !searching);
+
+  const query = $derived<Query>({
+    library: library.id,
+    filter,
+    sort,
+    desc: prefs.librarySortDesc,
+    collapse: isBooks && prefs.collapseSeries && !filter,
+    seed: shuffling ? seed : null
+  });
+  // Synchronously first, so a remembered list is there for the very first render.
+  list.set(untrack(() => query));
+  $effect.pre(() => {
+    const q = query;
+    untrack(() => list.set(q));
+  });
+  $effect(() => () => list.dispose());
+
+  // Title search. abs.search is capped at 12 results; a library view wants more.
+  const found = resource(() => (term ? { library: library.id, q: term } : null), {
+    id: (k) => `library-search:${k.library}:${k.q}`,
+    load: (k, signal) =>
+      request<SearchResults>(`/api/libraries/${k.library}/search`, { query: { q: k.q, limit: 100 }, signal }).then(
+        (res) => (isBooks ? res.book : res.podcast)?.map((r) => r.libraryItem) ?? []
+      )
+  });
+
+  const shown = $derived(searching ? (found.data ?? []) : list.items);
+  const count = $derived(searching ? (found.data ? found.data.length : null) : list.total);
+
+  // The box follows the URL (Back to a filtered list shows its text) without fighting the person typing.
+  let text = $state(untrack(() => page.url.searchParams.get('q') ?? ''));
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const t = term;
+    untrack(() => {
+      if (t !== text.trim()) text = t;
+    });
+  });
+
+  function setParams(patch: Record<string, string>) {
+    const url = new URL(page.url);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) url.searchParams.set(k, v);
+      else url.searchParams.delete(k);
+    }
+    void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
+  function onText() {
+    clearTimeout(debounce);
+    const q = text.trim();
+    debounce = setTimeout(() => setParams({ q }), q ? 250 : 0);
+  }
+
+  function clearText() {
+    clearTimeout(debounce);
+    text = '';
+    setParams({ q: '' });
+  }
+
+  function setFilter(value: string, label = '') {
+    setParams({ filter: value, label });
+  }
+
+  function reshuffle() {
+    seed = newSeed();
+    seeds.set(library.id, seed);
+  }
 
   onMount(() => {
     if (isBooks)
@@ -86,109 +182,28 @@
 
   // Titles added on the server since this list loaded; offered as a refresh rather than shifting the grid under the reader.
   let added = $state(0);
-  let reloads = $state(0);
+  $effect(() => {
+    void query;
+    added = 0;
+  });
 
   $effect(() =>
     live.onItemChange((change, it) => {
       if (it.libraryId !== library.id) return;
       if (change === 'added') added++;
-      else if (change === 'removed') {
-        const before = items.length;
-        items = items.filter((x) => x.id !== it.id);
-        if (total !== null && items.length < before) total--;
-      } else items = items.map((x) => (x.id === it.id && !x.collapsedSeries ? it : x));
+      else if (change === 'removed') list.update((items) => items.filter((x) => x.id !== it.id), -1);
+      else list.update((items) => items.map((x) => (x.id === it.id && !x.collapsedSeries ? it : x)));
     })
   );
 
-  $effect(() => {
-    // Reset whenever the query changes.
-    void [filter, sort, prefs.librarySortDesc, prefs.collapseSeries, reloads];
+  function refresh() {
     added = 0;
-    generation++;
-    items = [];
-    total = null;
-    nextPage = 0;
-    error = null;
-    loading = false;
-    untrack(() => void loadMore());
-  });
-
-  async function loadMore() {
-    if (loading || (total !== null && items.length >= total)) return;
-    const gen = generation;
-    loading = true;
-    try {
-      const res = await abs.getLibraryItems(library.id, {
-        sort,
-        desc: prefs.librarySortDesc,
-        filter: filter || undefined,
-        page: nextPage,
-        limit: PAGE,
-        collapseseries: isBooks && prefs.collapseSeries && !filter
-      });
-      if (gen !== generation) return;
-      items = [...items, ...res.results];
-      total = res.total;
-      nextPage++;
-    } catch (err) {
-      if (gen === generation) error = (err as Error).message;
-    } finally {
-      if (gen === generation) loading = false;
-    }
-  }
-
-  $effect(() => {
-    void findNonce;
-    const q = term;
-    if (!q) {
-      found = [];
-      finding = false;
-      findError = null;
-      return;
-    }
-    const ctl = new AbortController();
-    finding = true;
-    findError = null;
-    // abs.search is capped at 12 results; a library view wants more.
-    request<SearchResults>(`/api/libraries/${library.id}/search`, { query: { q, limit: 100 }, signal: ctl.signal })
-      .then((res) => {
-        found = (isBooks ? res.book : res.podcast)?.map((r) => r.libraryItem) ?? [];
-        finding = false;
-      })
-      .catch((err) => {
-        if (ctl.signal.aborted) return;
-        findError = (err as Error).message;
-        finding = false;
-      });
-    return () => ctl.abort();
-  });
-
-  function onQuery() {
-    clearTimeout(debounce);
-    const q = query.trim();
-    if (!q) term = '';
-    else
-      debounce = setTimeout(() => {
-        term = q;
-        finding = true;
-      }, 250);
-  }
-
-  function clearQuery() {
-    clearTimeout(debounce);
-    query = '';
-    term = '';
-  }
-
-  function setFilter(value: string, label = '') {
-    const url = new URL(page.url);
-    if (value) url.searchParams.set('filter', value);
-    else url.searchParams.delete('filter');
-    if (label) url.searchParams.set('label', label);
-    else url.searchParams.delete('label');
-    void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
+    if (shuffling) reshuffle();
+    else list.reload();
   }
 </script>
+
+<svelte:head><title>{pageTitle(filterLabel || (searching ? `“${term}”` : ''), library.name)}</title></svelte:head>
 
 <div class="page">
   <header class="head">
@@ -197,36 +212,36 @@
       <span class="count faint num">{searching ? plural(count, 'result') : `${count.toLocaleString()} ${count === 1 ? 'title' : 'titles'}`}</span>
     {/if}
     {#if added && !searching}
-      <button class="fresh" onclick={() => reloads++}>{plural(added, 'new title')} added · Refresh</button>
+      <button class="fresh" onclick={refresh}>{plural(added, 'new title')} added · Refresh</button>
     {/if}
   </header>
 
   <div class="toolbar">
     <label class="find">
-      <Search size={14} />
+      <Search size={14} aria-hidden="true" />
       <input
         type="text"
         placeholder="Filter titles"
         aria-label="Filter titles"
         autocomplete="off"
         spellcheck="false"
-        bind:value={query}
-        oninput={onQuery}
+        bind:value={text}
+        oninput={onText}
         onkeydown={(e) => {
-          if (e.key === 'Escape' && query) {
+          if (e.key === 'Escape' && text) {
             e.stopPropagation();
-            clearQuery();
+            clearText();
           }
         }}
       />
-      {#if query}
-        <button class="x" onclick={clearQuery} aria-label="Clear search"><X size={14} /></button>
+      {#if text}
+        <button class="x" onclick={clearText} aria-label="Clear filter text"><X size={14} /></button>
       {/if}
     </label>
 
     {#if isBooks}
       <div class="filters" class:off={searching} inert={searching}>
-        <div class="chips" role="radiogroup" aria-label="Listening status">
+        <div class="chips" role="radiogroup" aria-label="Listening status" {@attach roving()}>
           {#each progressFilters as f (f.value)}
             <button
               class="chip"
@@ -238,7 +253,9 @@
         </div>
         <FilterMenu {filterData} active={filter} onselect={setFilter} />
         {#if filter && !filter.startsWith('progress.')}
-          <button class="chip on" onclick={() => setFilter('')}>{filterLabel || 'Filtered'} <X size={13} /></button>
+          <button class="chip on" onclick={() => setFilter('')} aria-label="Remove filter: {filterLabel || 'Filtered'}"
+            >{filterLabel || 'Filtered'} <X size={13} /></button
+          >
         {/if}
       </div>
     {/if}
@@ -256,39 +273,44 @@
       >
     {/if}
     <div class="seg" role="group" aria-label="View">
-      <button class="icon-btn" aria-pressed={!list} onclick={() => (prefs.libraryView = 'grid')} title="Grid" aria-label="Grid view"
+      <button class="icon-btn" aria-pressed={!listView} onclick={() => (prefs.libraryView = 'grid')} title="Grid" aria-label="Grid view"
         ><LayoutGrid size={18} /></button
       >
-      <button class="icon-btn" aria-pressed={list} onclick={() => (prefs.libraryView = 'list')} title="List" aria-label="List view"><List size={18} /></button>
+      <button class="icon-btn" aria-pressed={listView} onclick={() => (prefs.libraryView = 'list')} title="List" aria-label="List view"
+        ><List size={18} /></button
+      >
     </div>
     <div class="sort">
       <select class="select" aria-label="Sort by" value={sort} disabled={searching} onchange={(e) => (prefs.librarySort = e.currentTarget.value)}>
         {#each sorts as s (s.value)}<option value={s.value}>{s.label}</option>{/each}
       </select>
-      <button
-        class="icon-btn"
-        onclick={() => (prefs.librarySortDesc = !prefs.librarySortDesc)}
-        disabled={searching}
-        aria-label={prefs.librarySortDesc ? 'Sort descending' : 'Sort ascending'}
-        title={prefs.librarySortDesc ? 'Descending' : 'Ascending'}
-      >
-        {#if prefs.librarySortDesc}<ArrowDownWideNarrow size={18} />{:else}<ArrowUpNarrowWide size={18} />{/if}
-      </button>
+      {#if shuffling}
+        <button class="icon-btn" onclick={reshuffle} disabled={searching} aria-label="Shuffle again" title="Shuffle again"><Shuffle size={18} /></button>
+      {:else}
+        <button
+          class="icon-btn"
+          onclick={() => (prefs.librarySortDesc = !prefs.librarySortDesc)}
+          disabled={searching}
+          aria-label={prefs.librarySortDesc ? 'Sort descending' : 'Sort ascending'}
+          title={prefs.librarySortDesc ? 'Descending' : 'Ascending'}
+        >
+          {#if prefs.librarySortDesc}<ArrowDownWideNarrow size={18} />{:else}<ArrowUpNarrowWide size={18} />{/if}
+        </button>
+      {/if}
     </div>
   </div>
 
-  {#if searching ? findError : error}
-    <EmptyState title={searching ? "Couldn't search this library" : "Couldn't load this library"}>
-      <p>{searching ? findError : error}</p>
-      <button class="btn btn-primary" onclick={() => (searching ? findNonce++ : loadMore())}>Try again</button>
-    </EmptyState>
-  {:else if searching && !finding && found.length === 0}
+  {#if searching && found.error}
+    <ErrorState title="Couldn't search this library" message={found.error} cause={found.cause} onretry={() => found.refresh()} />
+  {:else if !searching && list.error && !list.items.length}
+    <ErrorState title="Couldn't load this library" message={list.error} cause={list.cause} onretry={() => list.loadMore()} />
+  {:else if searching && found.data && found.data.length === 0}
     <EmptyState title="No matches">
       <p>Nothing in {library.name} matches “{term}”.</p>
-      <button class="btn btn-quiet" onclick={clearQuery}>Clear search</button>
+      <button class="btn btn-quiet" onclick={clearText}>Clear filter text</button>
     </EmptyState>
-  {:else if !searching && total === 0}
-    <EmptyState title="Nothing matches">
+  {:else if !searching && list.total === 0}
+    <EmptyState title={filter ? 'Nothing matches' : 'No titles yet'}>
       {#if filter}
         <p>No titles fit this filter.</p>
         <button class="btn btn-quiet" onclick={() => setFilter('')}>Clear filter</button>
@@ -302,33 +324,41 @@
     {/if}
     <!-- Cards differ in height by title length and the series stack; even them out so rows are a fixed pitch. -->
     <div class="results" class:collapsing>
-      {#key list}
+      {#key listView}
         <VirtualGrid
           items={shown}
           key={keyOf}
-          minColumnWidth={list ? 1e6 : 160}
-          columnGap={list ? 0 : 24}
-          rowGap={list ? 0 : 30}
-          estimateRowHeight={list ? 68 : 320}
-          onnearend={searching ? undefined : loadMore}
+          minColumnWidth={listView ? 1e6 : 160}
+          columnGap={listView ? 0 : 24}
+          rowGap={listView ? 0 : 30}
+          estimateRowHeight={listView ? 68 : 320}
+          onnearend={searching ? undefined : () => list.loadMore()}
         >
           {#snippet item(it)}
-            {#if list}<ItemRow item={it} />{:else}<ItemCard item={it} />{/if}
+            {#if listView}<ItemRow item={it} />{:else}<ItemCard item={it} />{/if}
           {/snippet}
         </VirtualGrid>
       {/key}
     </div>
-    {#if shown.length > 0 && !searching && loading}<div class="more">{@render skeleton(true)}</div>{/if}
+    {#if shown.length > 0 && !searching}
+      {#if list.loading}<div class="more">{@render skeleton(true)}</div>{/if}
+      {#if list.error}
+        <p class="more-error" role="alert">
+          Couldn't load more titles. <button class="link" onclick={() => list.loadMore()}>Try again</button>
+        </p>
+      {/if}
+    {/if}
   {/if}
 </div>
 
 {#snippet skeleton(more = false)}
-  {#if list}
-    <div class="sk-rows" aria-hidden="true">
-      {#each Array(more ? 3 : 10) as _, i (i)}<div class="sk-row" style:animation-delay="{i * 60}ms"></div>{/each}
+  {#if listView}
+    <div class="sk-rows" role="status">
+      <span class="sr-only">Loading titles…</span>
+      {#each Array(more ? 3 : 10) as _, i (i)}<div class="sk-row" style:animation-delay="{i * 60}ms" aria-hidden="true"></div>{/each}
     </div>
   {:else}
-    <CardSkeleton count={more ? 6 : 12} />
+    <CardSkeleton count={more ? 6 : 12} label="Loading titles" />
   {/if}
 {/snippet}
 
@@ -461,6 +491,16 @@
   }
   .more {
     margin-top: 30px;
+  }
+  .more-error {
+    margin-top: 24px;
+    text-align: center;
+    font-size: var(--t-sm);
+    color: var(--text-2);
+  }
+  .link {
+    color: var(--accent);
+    font-weight: 650;
   }
   .sk-rows {
     display: flex;

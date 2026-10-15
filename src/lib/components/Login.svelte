@@ -2,6 +2,9 @@
   import { KeyRound, LoaderCircle, UserRound } from '@lucide/svelte';
   import { loginWithApiKey, loginWithPassword, normalizeServerUrl, probeServer } from '$lib/api/client';
   import { session } from '$lib/stores/session.svelte';
+  import { friendlyLoginError } from '$lib/util/errors';
+  import { roving } from '$lib/util/roving';
+  import { pageTitle } from '$lib/util/title';
 
   const LAST_SERVER = 'lectern.lastServer';
 
@@ -26,8 +29,9 @@
     if (method === 'password' && !username.trim()) return (error = 'Enter your username.');
     if (method === 'apikey' && !apiKey.trim()) return (error = 'Paste an API key from your server settings.');
     busy = true;
+    let url: string | undefined;
     try {
-      const url = normalizeServerUrl(server);
+      url = normalizeServerUrl(server);
       await probeServer(url);
       if (method === 'password') await loginWithPassword(url, username.trim(), password);
       else await loginWithApiKey(url, apiKey);
@@ -36,12 +40,14 @@
       if (session.addingAccount) return location.reload();
       await session.load();
     } catch (err) {
-      error = (err as Error).message;
+      error = friendlyLoginError(err, server, url);
     } finally {
       busy = false;
     }
   }
 </script>
+
+<svelte:head><title>{pageTitle(session.addingAccount ? 'Add an account' : 'Sign in')}</title></svelte:head>
 
 <div class="login">
   <div class="drag" data-tauri-drag-region></div>
@@ -64,7 +70,7 @@
         <input class="field" bind:value={server} placeholder="abs.example.com or 192.168.1.20:13378" autocomplete="url" spellcheck="false" />
       </label>
 
-      <div class="seg" role="radiogroup" aria-label="Sign-in method">
+      <div class="seg" role="radiogroup" aria-label="Sign-in method" {@attach roving()}>
         <button type="button" role="radio" aria-checked={method === 'password'} onclick={() => (method = 'password')}>
           <UserRound size={15} /> Username
         </button>

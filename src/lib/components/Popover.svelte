@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { tick } from 'svelte';
 
   interface Props {
     label: string;
@@ -8,19 +9,31 @@
     trigger: Snippet<[{ open: boolean }]>;
     children: Snippet<[{ close: () => void }]>;
     triggerClass?: string;
-    pressed?: boolean;
+    /** Highlights the trigger (e.g. a sleep timer is running). Visual only: the trigger's state is aria-expanded. */
+    active?: boolean;
   }
-  let { label, placement = 'up', align = 'end', trigger, children, triggerClass = 'icon-btn', pressed }: Props = $props();
+  let { label, placement = 'up', align = 'end', trigger, children, triggerClass = 'icon-btn', active = false }: Props = $props();
 
   let open = $state(false);
   let root: HTMLDivElement;
+  let button: HTMLButtonElement;
+  let panel = $state<HTMLDivElement>();
+  const id = $props.id();
 
-  const close = () => (open = false);
+  function close(refocus = true) {
+    open = false;
+    if (refocus) button?.focus();
+  }
 
   $effect(() => {
     if (!open) return;
+    // Move into the panel unless something in it already took focus (a search box focuses itself).
+    void tick().then(() => {
+      if (panel && !panel.contains(document.activeElement))
+        panel.querySelector<HTMLElement>('input, button:not(:disabled), [tabindex]:not([tabindex="-1"])')?.focus();
+    });
     const onDown = (e: PointerEvent) => {
-      if (!root.contains(e.target as Node)) close();
+      if (!root.contains(e.target as Node)) close(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -35,14 +48,31 @@
       window.removeEventListener('keydown', onKey, true);
     };
   });
+
+  // Tabbing out of the panel closes it. A null relatedTarget (a click on something unfocusable, the window
+  // losing focus) is left to the pointerdown handler, so clicks inside the panel still land.
+  function onFocusOut(e: FocusEvent) {
+    const next = e.relatedTarget as Node | null;
+    if (open && next && !root.contains(next)) close(false);
+  }
 </script>
 
-<div class="pop" bind:this={root}>
-  <button class={triggerClass} aria-label={label} title={label} aria-expanded={open} aria-pressed={pressed} onclick={() => (open = !open)}>
+<div class="pop" bind:this={root} onfocusout={onFocusOut}>
+  <button
+    bind:this={button}
+    class={triggerClass}
+    class:active
+    aria-label={label}
+    title={label}
+    aria-haspopup="dialog"
+    aria-expanded={open}
+    aria-controls={open ? id : undefined}
+    onclick={() => (open ? close(false) : (open = true))}
+  >
     {@render trigger({ open })}
   </button>
   {#if open}
-    <div class="panel {placement} {align}" role="dialog" aria-label={label}>
+    <div class="panel {placement} {align}" role="dialog" aria-label={label} {id} bind:this={panel}>
       {@render children({ close })}
     </div>
   {/if}

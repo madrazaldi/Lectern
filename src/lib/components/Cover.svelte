@@ -19,8 +19,9 @@
 
   let { itemId, title = '', author = '', updatedAt, width = 400, aspect, hasCover = true, radius = 'var(--r-sm)', eager = false }: Props = $props();
 
-  let failed = $state(false);
-  let loaded = $state(false);
+  // Which source failed / finished loading; a new source starts fresh without an effect resetting flags.
+  let failedSrc = $state<string | null>(null);
+  let loadedSrc = $state<string | null>(null);
   const ratio = $derived(aspect ?? (session.library?.settings.coverAspectRatio === 0 ? 1.6 : 1));
   // A downloaded copy loads instantly and works offline.
   const local = $derived(downloads.coverFor(itemId));
@@ -33,25 +34,25 @@
     return `hsl(${Math.abs(hash) % 360} 28% 30%)`;
   });
 
-  $effect(() => {
-    void src;
-    failed = false;
-    loaded = false;
-  });
+  const failed = $derived(failedSrc === src);
+  const loaded = $derived(loadedSrc === src);
 </script>
 
 <div class="cover" style:aspect-ratio="1 / {ratio}" style:border-radius={radius} style:--cloth={cloth}>
   {#if hasCover && !failed}
-    <img
-      {src}
-      alt=""
-      loading={eager ? 'eager' : 'lazy'}
-      decoding="async"
-      draggable="false"
-      class:loaded
-      onload={() => (loaded = true)}
-      onerror={() => (failed = true)}
-    />
+    <!-- A fresh element per source, so the old image never shows (at full opacity) while the new one loads. -->
+    {#key src}
+      <img
+        {src}
+        alt=""
+        loading={eager ? 'eager' : 'lazy'}
+        decoding="async"
+        draggable="false"
+        class:loaded
+        onload={(e) => (loadedSrc = e.currentTarget.getAttribute('src'))}
+        onerror={(e) => (failedSrc = e.currentTarget.getAttribute('src'))}
+      />
+    {/key}
   {/if}
   {#if !hasCover || failed}
     <div class="plate">

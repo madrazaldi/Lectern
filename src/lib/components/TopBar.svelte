@@ -1,50 +1,62 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight, Search, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
+  import { isMacPlatform, modLabel } from '$lib/util/shortcuts';
 
   let input = $state<HTMLInputElement>();
-  let q = $state(page.url.pathname === '/search' ? (page.url.searchParams.get('q') ?? '') : '');
+  let q = $state('');
   let timer: ReturnType<typeof setTimeout>;
+  const onSearch = $derived(page.url.pathname === '/search');
+  const urlQuery = $derived(onSearch ? (page.url.searchParams.get('q') ?? '') : '');
+  const hint = `${modLabel(isMacPlatform())}K`;
 
+  // Follow the URL (Back to /search?q=x shows x; leaving search empties the box), but don't fight the
+  // person typing: the URL only ever holds the trimmed text.
   $effect(() => {
-    if (page.url.pathname !== '/search') q = '';
+    const u = urlQuery;
+    untrack(() => {
+      if (u !== q.trim()) q = u;
+    });
   });
+
+  function search(term: string) {
+    clearTimeout(timer);
+    if (term) void goto(`/search?q=${encodeURIComponent(term)}`, { replaceState: onSearch, keepFocus: true, noScroll: true });
+    // Emptying the box on the results page empties the results too.
+    else if (onSearch && urlQuery) void goto('/search', { replaceState: true, keepFocus: true, noScroll: true });
+  }
 
   function onInput() {
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      const term = q.trim();
-      if (term) void goto(`/search?q=${encodeURIComponent(term)}`, { replaceState: page.url.pathname === '/search', keepFocus: true });
-    }, 220);
+    timer = setTimeout(() => search(q.trim()), 220);
+  }
+
+  function clear() {
+    q = '';
+    search('');
+    input?.focus();
   }
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      q = '';
-      input?.blur();
-    }
+      e.stopPropagation();
+      if (q) clear();
+      else input?.blur();
+    } else if (e.key === 'Enter') search(q.trim());
   }
 
   $effect(() => {
-    const focus = (e: KeyboardEvent) => {
-      const typing = (e.target as HTMLElement)?.closest('input, textarea, [contenteditable]');
-      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !typing)) {
-        e.preventDefault();
-        input?.focus();
-        input?.select();
-      }
-    };
-    // Search from the app menu (⌘F).
-    const fromMenu = () => {
+    // ⌘K, / and the app menu's Search all arrive here (the layout's shortcut handler dispatches it).
+    const focus = () => {
       input?.focus();
       input?.select();
     };
-    window.addEventListener('keydown', focus);
-    window.addEventListener('lectern:focus-search', fromMenu);
+    window.addEventListener('lectern:focus-search', focus);
     return () => {
-      window.removeEventListener('keydown', focus);
-      window.removeEventListener('lectern:focus-search', fromMenu);
+      window.removeEventListener('lectern:focus-search', focus);
+      clearTimeout(timer);
     };
   });
 </script>
@@ -54,13 +66,23 @@
     <button class="icon-btn" onclick={() => history.back()} aria-label="Back"><ChevronLeft size={20} /></button>
     <button class="icon-btn" onclick={() => history.forward()} aria-label="Forward"><ChevronRight size={20} /></button>
   </div>
-  <label class="search">
-    <Search size={16} />
-    <input bind:this={input} bind:value={q} oninput={onInput} onkeydown={onKey} placeholder="Search titles, authors, narrators, series" spellcheck="false" />
+  <label class="search" role="search">
+    <Search size={16} aria-hidden="true" />
+    <input
+      bind:this={input}
+      bind:value={q}
+      oninput={onInput}
+      onkeydown={onKey}
+      type="search"
+      aria-label="Search the library"
+      placeholder="Search titles, authors, narrators, series"
+      spellcheck="false"
+      autocomplete="off"
+    />
     {#if q}
-      <button class="clear" onclick={() => (q = '')} aria-label="Clear search"><X size={14} /></button>
+      <button class="clear" onclick={clear} aria-label="Clear search"><X size={14} /></button>
     {:else}
-      <kbd>⌘K</kbd>
+      <kbd aria-hidden="true">{hint}</kbd>
     {/if}
   </label>
 </div>
@@ -110,6 +132,9 @@
   }
   input::placeholder {
     color: var(--text-3);
+  }
+  input::-webkit-search-cancel-button {
+    display: none;
   }
   kbd {
     font-family: var(--font-sans);

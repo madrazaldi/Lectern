@@ -2,12 +2,28 @@
   import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { X } from '@lucide/svelte';
-  import { dismiss, toasts } from '$lib/stores/toast.svelte';
+  import { dismiss, pause, resume, toasts } from '$lib/stores/toast.svelte';
+  import { motion } from '$lib/util/motion';
 </script>
 
-<div class="toasts" aria-live="polite">
+<!-- Each toast is its own live region: errors interrupt (alert), everything else waits its turn (status). -->
+<section class="toasts" aria-label="Notifications">
   {#each toasts as t (t.id)}
-    <div class="toast" class:error={t.tone === 'error'} animate:flip={{ duration: 200 }} transition:fly={{ y: 12, duration: 200 }}>
+    <div
+      class="toast"
+      class:error={t.tone === 'error'}
+      role={t.tone === 'error' ? 'alert' : 'status'}
+      aria-live={t.tone === 'error' ? 'assertive' : 'polite'}
+      aria-atomic="true"
+      animate:flip={motion({ duration: 200 })}
+      transition:fly={motion({ y: 12, duration: 200 })}
+      onmouseenter={() => pause(t.id)}
+      onmouseleave={() => resume(t.id)}
+      onfocusin={() => pause(t.id)}
+      onfocusout={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) resume(t.id);
+      }}
+    >
       <span>{t.message}</span>
       {#if t.action}
         <button
@@ -21,7 +37,7 @@
       <button class="x" onclick={() => dismiss(t.id)} aria-label="Dismiss"><X size={14} /></button>
     </div>
   {/each}
-</div>
+</section>
 
 <style>
   .toasts {
@@ -51,7 +67,8 @@
   }
   .toast.error {
     background: var(--danger);
-    color: #1b1922;
+    /* Dark ink on the dark theme's coral, white on the light theme's brick: both clear 4.5:1. */
+    color: var(--accent-ink);
   }
   .act {
     font-weight: 700;
@@ -66,7 +83,11 @@
     border-radius: 50%;
     opacity: 0.6;
   }
-  .x:hover {
+  .x:hover,
+  .x:focus-visible {
     opacity: 1;
+  }
+  .toast :focus-visible {
+    outline-color: currentColor;
   }
 </style>

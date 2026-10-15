@@ -1,22 +1,20 @@
 <script lang="ts">
-  import { LoaderCircle } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import * as abs from '$lib/api/abs';
-  import type { ListeningStats } from '$lib/api/types';
   import Cover from '$lib/components/Cover.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
+  import Loading from '$lib/components/Loading.svelte';
+  import { session } from '$lib/stores/session.svelte';
   import { duration, relative } from '$lib/util/format';
+  import { resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
-  let stats = $state<ListeningStats | null>(null);
-  let error = $state<string | null>(null);
-  let hover = $state<{ x: number; y: number; label: string; value: string } | null>(null);
-
-  onMount(() => {
-    abs
-      .getListeningStats()
-      .then((s) => (stats = s))
-      .catch((err) => (error = err.message));
+  // Per user: the cache outlives a sign-out and back in as someone else.
+  const res = resource(() => session.user?.id ?? null, {
+    id: (k) => `stats:${k}`,
+    load: () => abs.getListeningStats()
   });
+  const stats = $derived(res.data ?? null);
+  let hover = $state<{ x: number; y: number; label: string; value: string } | null>(null);
 
   const DAY = 86_400_000;
   const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -91,13 +89,15 @@
   }
 </script>
 
+<svelte:head><title>{pageTitle('Listening')}</title></svelte:head>
+
 <div class="page">
   <h1 class="page-title">Listening</h1>
 
-  {#if error}
-    <EmptyState title="Couldn't load your listening history"><p>{error}</p></EmptyState>
+  {#if res.error}
+    <ErrorState title="Couldn't load your listening history" message={res.error} cause={res.cause} onretry={() => res.refresh()} />
   {:else if !stats}
-    <div class="loading"><LoaderCircle size={26} class="spin" /></div>
+    <Loading label="Loading your listening history" />
   {:else}
     <section class="totals" aria-label="Totals">
       <div><span class="v num">{duration(stats.totalTime, { short: true })}</span><span class="l">listened in all</span></div>
@@ -205,12 +205,6 @@
 {/if}
 
 <style>
-  .loading {
-    display: grid;
-    place-items: center;
-    height: 40vh;
-    color: var(--text-3);
-  }
   .totals {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { Check, Pause, Play } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
-  import type { LibraryItem, PodcastMetadata } from '$lib/api/types';
+  import type { LibraryItem } from '$lib/api/types';
   import { isBook, isPodcast } from '$lib/api/types';
-  import { player } from '$lib/stores/player.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { duration } from '$lib/util/format';
+  import { itemMenuFor } from '$lib/util/itemMenu';
+  import { ItemView } from '$lib/util/itemView.svelte';
   import Cover from './Cover.svelte';
   import Progress from './Progress.svelte';
 
@@ -13,80 +14,61 @@
     item: LibraryItem;
     /** Show the series position ("Book 3") under the title. */
     showSequence?: boolean;
-    /** Extra controls at the end of the row. Rendered outside the link, so clicks in here never navigate. */
+    /** Extra controls at the end of the row. They sit above the row's link, so clicks in here never navigate. */
     actions?: Snippet;
   }
   let { item, showSequence = false, actions }: Props = $props();
 
-  const meta = $derived(item.media.metadata);
-  const series = $derived(item.collapsedSeries);
-  const episode = $derived(item.recentEpisode ?? null);
-  const href = $derived(series ? `/series/${series.id}` : `/item/${item.id}`);
-  const title = $derived(series ? series.name : (episode?.title ?? meta.title));
+  const v = new ItemView(() => item);
   const sub = $derived.by(() => {
-    if (series) return `${series.numBooks} books`;
-    if (episode) return meta.title;
+    if (v.series) return `${v.series.numBooks} books`;
+    if (v.episode) return item.media.metadata.title;
     if (isBook(item)) {
       if (showSequence && item.sequence) return `Book ${item.sequence}`;
       return item.media.metadata.seriesName || item.media.metadata.subtitle || '';
     }
     return '';
   });
-  const author = $derived.by(() => {
-    if (series) return '';
-    if (isBook(item)) return item.media.metadata.authorName ?? '';
-    return (item.media.metadata as PodcastMetadata).author ?? '';
-  });
-  const narrator = $derived(!series && isBook(item) ? (item.media.metadata.narratorName ?? '') : '');
+  const narrator = $derived(!v.series && isBook(item) ? (item.media.metadata.narratorName ?? '') : '');
   const length = $derived.by(() => {
-    if (series) return '';
-    if (episode) return episode.duration ? duration(episode.duration, { short: true }) : '';
+    if (v.series) return '';
+    if (v.episode) return v.episode.duration ? duration(v.episode.duration, { short: true }) : '';
     if (isBook(item)) return item.media.duration ? duration(item.media.duration, { short: true }) : '';
     const n = isPodcast(item) ? item.media.numEpisodes : 0;
     return n ? `${n.toLocaleString()} ep` : '';
   });
-  const progress = $derived(series ? undefined : session.progressFor(item.id, episode?.id));
-  const current = $derived(!series && player.isCurrent(item.id, episode?.id));
-  const playing = $derived(current && player.isPlaying);
-  const canPlay = $derived(!series && (!isPodcast(item) || !!episode) && !item.isMissing);
   const ratio = $derived(session.library?.settings.coverAspectRatio === 0 ? 1.6 : 1);
-
-  function onPlay(e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (current) player.toggle();
-    else void player.play(item.id, episode?.id ?? null);
-  }
 </script>
 
-<div class="row" class:current style:--ratio={ratio}>
-  <a class="link" {href} class:with-actions={!!actions} draggable="false">
+<!-- The title link stretches over the row; Play and the extra actions sit above it as siblings. -->
+<div class="row stretch-host" class:current={v.current} style:--ratio={ratio} {@attach itemMenuFor(() => ({ item }))}>
+  <div class="cells" class:with-actions={!!actions}>
     <span class="art">
-      <Cover itemId={item.id} {title} {author} updatedAt={item.updatedAt} hasCover={!!item.media.coverPath} width={120} />
+      <Cover itemId={item.id} title={v.title} author={v.author} updatedAt={item.updatedAt} hasCover={!!item.media.coverPath} width={120} />
     </span>
     <span class="main">
-      <span class="title">{title}</span>
+      <a class="title stretched" href={v.href} draggable="false">{v.title}</a>
       {#if sub}<span class="sub">{sub}</span>{/if}
     </span>
-    <span class="cell author">{author}</span>
+    <span class="cell author">{v.author}</span>
     <span class="cell narrator">{narrator}</span>
     <span class="cell len num">{length}</span>
     <span class="status">
-      {#if progress?.isFinished}
-        <span class="done" title="Finished"><Check size={14} strokeWidth={2.5} /></span>
-      {:else if progress && progress.progress > 0}
-        <span class="pct num">{Math.round(progress.progress * 100)}%</span>
-        <span class="bar"><Progress value={progress.progress} /></span>
+      {#if v.progress?.isFinished}
+        <span class="done" title="Finished"><Check size={14} strokeWidth={2.5} /><span class="sr-only">Finished</span></span>
+      {:else if v.progress && v.progress.progress > 0}
+        <span class="pct num" aria-hidden="true">{Math.round(v.progress.progress * 100)}%</span>
+        <span class="bar"><Progress value={v.progress.progress} label="{v.title}: listened" /></span>
       {/if}
     </span>
     <span class="go">
-      {#if canPlay}
-        <button class="play" class:on={playing} onclick={onPlay} aria-label={playing ? `Pause ${title}` : `Play ${title}`}>
-          {#if playing}<Pause size={15} fill="currentColor" strokeWidth={0} />{:else}<Play size={15} fill="currentColor" strokeWidth={0} />{/if}
+      {#if v.canPlay}
+        <button class="play" class:on={v.playing} onclick={v.play} aria-label={v.playLabel}>
+          {#if v.playing}<Pause size={15} fill="currentColor" strokeWidth={0} />{:else}<Play size={15} fill="currentColor" strokeWidth={0} />{/if}
         </button>
       {/if}
     </span>
-  </a>
+  </div>
   {#if actions}<div class="actions">{@render actions()}</div>{/if}
 </div>
 
@@ -103,7 +85,7 @@
   .row:hover {
     background: color-mix(in srgb, var(--text) 5%, transparent);
   }
-  .link {
+  .cells {
     flex: 1;
     min-width: 0;
     height: 100%;
@@ -113,7 +95,6 @@
     column-gap: 16px;
     padding: 0 12px;
     border-radius: var(--r-sm);
-    -webkit-user-drag: none;
   }
   .with-actions {
     padding-right: 4px;
@@ -132,6 +113,7 @@
     min-width: 0;
   }
   .title {
+    -webkit-user-drag: none;
     font-family: var(--font-serif);
     font-size: var(--t-md);
     font-weight: 560;
@@ -180,6 +162,8 @@
     place-items: center;
   }
   .play {
+    position: relative;
+    z-index: 2;
     display: grid;
     place-items: center;
     width: 32px;
@@ -197,12 +181,13 @@
     margin-left: 0;
   }
   .row:hover .play,
-  .link:focus-visible .play,
-  .play:focus-visible,
+  .row:focus-within .play,
   .play.on {
     opacity: 1;
   }
   .actions {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -211,7 +196,7 @@
   }
 
   @container (max-width: 860px) {
-    .link {
+    .cells {
       grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1.2fr) 64px 84px 34px;
     }
     .narrator {
@@ -219,7 +204,7 @@
     }
   }
   @container (max-width: 600px) {
-    .link {
+    .cells {
       grid-template-columns: 44px minmax(0, 1fr) 64px 34px;
       column-gap: 12px;
     }
