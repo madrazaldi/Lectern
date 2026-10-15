@@ -1,0 +1,334 @@
+/*
+  Lectern — a listening room after hours.
+  Ground is a dark violet-grey (a reading lamp's shadow, not black). The accent is gilt by
+  default, and takes on the hue of whatever cover is playing (--h / --s are set by the player).
+  Literata (a typeface drawn for long-form reading) carries titles; Schibsted Grotesk runs the UI.
+*/
+
+:root {
+  --h: 37;
+  --s: 70%;
+
+  --font-serif: 'Literata Variable', 'Iowan Old Style', Georgia, serif;
+  --font-sans: 'Schibsted Grotesk Variable', -apple-system, 'Segoe UI', sans-serif;
+
+  /* Type scale (1.25 minor third-ish, tuned for a dense desktop UI) */
+  --t-xs: 0.75rem;
+  --t-sm: 0.8125rem;
+  --t-md: 0.9375rem;
+  --t-lg: 1.125rem;
+  --t-xl: 1.5rem;
+  --t-2xl: 2.125rem;
+  --t-3xl: 3rem;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+
+  --sidebar-w: 232px;
+  --dock-h: 88px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: dark;
+  --ground: #1b1922;
+  --sidebar: #16141c;
+  --raised: #23202b;
+  --raised-2: #2c2836;
+  --rule: #353040;
+  --rule-soft: #2a2632;
+  --text: #eee7da;
+  --text-2: #b3abbd;
+  --text-3: #7d7588;
+  --danger: #ec7f72;
+  --accent-ink: #1b1922;
+  --shadow-cover: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -8px rgb(0 0 0 / 0.55);
+  --spine-empty: #3a3445;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --ground: #efedf2;
+  --sidebar: #e6e3eb;
+  --raised: #f9f8fb;
+  --raised-2: #ffffff;
+  --rule: #d6d1dd;
+  --rule-soft: #e2dee7;
+  --text: #211d29;
+  --text-2: #57506a;
+  --text-3: #8b849a;
+  --danger: #b8402f;
+  --accent-ink: #ffffff;
+  --shadow-cover: 0 1px 2px rgb(30 20 40 / 0.18), 0 12px 28px -10px rgb(30 20 40 / 0.35);
+  --spine-empty: #cfc9d8;
+}
+
+/*
+  Colours derived from --h/--s. Custom properties resolve where they're declared, so any
+  element that sets its own --h/--s (a hero tinted by its own cover) adds .tint-scope to
+  re-derive them locally.
+*/
+:root,
+.tint-scope {
+  --accent: hsl(var(--h) var(--s) 64%);
+  --accent-strong: hsl(var(--h) var(--s) 72%);
+  --accent-soft: hsl(var(--h) var(--s) 64% / 0.14);
+  --accent-ink: #1b1922;
+  --wash: hsl(var(--h) calc(var(--s) * 0.55) 14%);
+}
+
+:root[data-theme='light'],
+:root[data-theme='light'] .tint-scope {
+  --accent: hsl(var(--h) var(--s) 38%);
+  --accent-strong: hsl(var(--h) var(--s) 30%);
+  --accent-soft: hsl(var(--h) var(--s) 40% / 0.12);
+  --accent-ink: #ffffff;
+  --wash: hsl(var(--h) calc(var(--s) * 0.5) 88%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'ss01';
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Smooth accent changes when the playing cover changes. */
+@property --h {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 37;
+}
+@property --s {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 70%;
+}
+:root {
+  transition:
+    --h 900ms var(--ease),
+    --s 900ms var(--ease);
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+img {
+  display: block;
+}
+
+.serif {
+  font-family: var(--font-serif);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Scrollbars that recede until used */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 4px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text) 18%, transparent);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Shared controls */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background 120ms,
+    color 120ms,
+    transform 120ms;
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+.btn-quiet {
+  background: var(--raised-2);
+  color: var(--text);
+}
+.btn-quiet:hover:not(:disabled) {
+  background: var(--rule);
+}
+.btn-lg {
+  height: 44px;
+  padding: 0 22px;
+  font-size: var(--t-md);
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: var(--text-2);
+  transition:
+    background 120ms,
+    color 120ms;
+}
+.icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.icon-btn[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.field {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  outline: none;
+  transition: border-color 120ms;
+}
+.field:focus {
+  border-color: var(--accent);
+}
+.field::placeholder {
+  color: var(--text-3);
+}
+
+.select {
+  appearance: none;
+  height: 32px;
+  padding: 0 30px 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--raised)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23999' stroke-width='1.6'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E")
+    no-repeat right 12px center;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.page {
+  padding: 28px 40px 56px;
+  max-width: 1600px;
+}
+
+.page-title {
+  font-family: var(--font-serif);
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+  font-variation-settings: 'opsz' 60;
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.faint {
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
