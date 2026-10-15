@@ -1,6 +1,6 @@
 import { SvelteMap } from 'svelte/reactivity';
 import * as abs from '$lib/api/abs';
-import { authHeaders, coverUrl, ensureFreshToken, getCredentials, listAccounts, serverUrl, type Account } from '$lib/api/client';
+import { authHeaders, coverUrl, ensureFreshToken, getCredentials, listAccounts, onAccountChanged, serverUrl, type Account } from '$lib/api/client';
 import type { AudioFile, Chapter, LibraryItem, PodcastMetadata } from '$lib/api/types';
 import { isBook, isPodcast } from '$lib/api/types';
 import { call, inTauri, on } from '$lib/native';
@@ -202,6 +202,7 @@ class Downloads {
 
   /** Re-reads downloads for the account that is signed in now. Running downloads carry on. */
   reload(): Promise<void> {
+    if (!this.loading) return this.load();
     this.loading = (this.loading ?? Promise.resolve()).then(() => this.read(false));
     return this.loading;
   }
@@ -605,3 +606,6 @@ class Downloads {
 }
 
 export const downloads = new Downloads();
+
+// Records are kept per account: show the ones belonging to whoever is signed in now.
+onAccountChanged(() => void downloads.reload());

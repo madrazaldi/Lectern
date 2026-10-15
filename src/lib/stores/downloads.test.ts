@@ -7,6 +7,7 @@ vi.mock('$lib/api/abs', () => ({ getItem: vi.fn() }));
 vi.mock('$lib/api/client', () => ({
   getCredentials: vi.fn(),
   listAccounts: vi.fn(() => []),
+  onAccountChanged: vi.fn(),
   authHeaders: () => ({ Authorization: 'Bearer t' }),
   coverUrl: (id: string) => `http://abs/api/items/${id}/cover`,
   ensureFreshToken: vi.fn(() => Promise.resolve()),
