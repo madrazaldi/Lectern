@@ -3,7 +3,7 @@ import * as abs from '$lib/api/abs';
 import { clockSkew, isAuthLost, isUnreachable, scopedKey } from '$lib/api/client';
 import type { MediaProgress } from '$lib/api/types';
 import { session } from '$lib/stores/session.svelte';
-import { PositionSync, startPosition, type PendingPosition, type Position } from './sync';
+import { overtaken, PositionSync, startPosition, type Position } from './sync';
 
 const PENDING_KEY = 'lectern.reader.pending';
 const LOCAL_KEY = 'lectern.reader.local';
@@ -16,13 +16,8 @@ export const positions = new PositionSync({
   key: () => scopedKey(PENDING_KEY)
 });
 
-/** The server has a different position that's newer than the waiting one: read on another device since. */
-function overtaken(entry: PendingPosition, server: MediaProgress | null | undefined) {
-  return !!server?.ebookLocation && server.ebookLocation !== entry.location && server.lastUpdate > entry.updatedAt + clockSkew();
-}
-
-/** Send positions saved offline or left over from the last run. */
-export const flushPositions = () => positions.flushPending((itemId, entry) => overtaken(entry, session.progressFor(itemId)));
+/** Send positions saved offline or left over from the last run, unless read on elsewhere since. */
+export const flushPositions = () => positions.flushPending((itemId, entry) => overtaken(entry, session.progressFor(itemId), clockSkew()));
 
 // On launch (once progress from other devices has been read), and after a reconnect once it has been re-read.
 $effect.root(() => {
@@ -35,8 +30,9 @@ session.onReconnect(flushPositions);
 
 /** Where to open an item's primary ebook, given the server's progress for it. A waiting position the server has overtaken is dropped. */
 export function openingPosition(itemId: string, server: MediaProgress | null | undefined): Position | null {
+  positions.seen(itemId, server?.ebookLocation ?? null);
   const pending = positions.pending(itemId);
-  if (pending && overtaken(pending, server)) positions.discard(itemId);
+  if (pending && overtaken(pending, server, clockSkew())) positions.discard(itemId);
   return startPosition(server, positions.pending(itemId), clockSkew());
 }
 

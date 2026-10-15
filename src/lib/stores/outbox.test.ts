@@ -67,6 +67,37 @@ describe('outbox', () => {
     expect(outbox.pending).toBe(0);
   });
 
+  it('still sends progress when another device only moved its reading position since', async () => {
+    getProgress.mockResolvedValue({ lastUpdate: 3000, currentTime: 100, ebookLocation: 'cfi' } as never);
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 321, duration: 1000, baseTime: 100, updatedAt: 2000 });
+    await outbox.flush();
+    expect(updateProgress).toHaveBeenCalledWith('a', { currentTime: 321, duration: 1000, progress: 0.321 }, null);
+  });
+
+  it('drops progress based on a position another device has listened on from', async () => {
+    getProgress.mockResolvedValue({ lastUpdate: 3000, currentTime: 700 } as never);
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 321, duration: 1000, baseTime: 100, updatedAt: 2000 });
+    await outbox.flush();
+    expect(updateProgress).not.toHaveBeenCalled();
+    expect(outbox.pending).toBe(0);
+  });
+
+  it('sets the position of an offline session the server ignored for a reading position saved elsewhere', async () => {
+    const s = { ...localSession('s1'), episodeId: null, startTime: 100, currentTime: 400, duration: 1000 };
+    outbox.putSession(s);
+    // The server kept its own position (still where the session started): only the ebook moved elsewhere.
+    getProgress.mockResolvedValue({ lastUpdate: 9000, currentTime: 100 } as never);
+    await outbox.flush();
+    expect(updateProgress).toHaveBeenCalledWith('a', { currentTime: 400, duration: 1000, progress: 0.4 }, null);
+
+    // Another device listened on: its position stands.
+    updateProgress.mockClear();
+    outbox.putSession({ ...s, id: 's2' });
+    getProgress.mockResolvedValue({ lastUpdate: 9000, currentTime: 800 } as never);
+    await outbox.flush();
+    expect(updateProgress).not.toHaveBeenCalled();
+  });
+
   it('keeps everything and stops when the server is unreachable', async () => {
     getProgress.mockRejectedValue(new ApiError(0, 'offline'));
     put('a', 1);

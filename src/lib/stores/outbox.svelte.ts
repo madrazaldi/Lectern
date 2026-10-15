@@ -11,7 +11,9 @@ import { ApiError, clockSkew, isAuthLost, isUnreachable, scopedKey } from '$lib/
  * - `session` entries are whole listening sessions played without the server. Re-sending one replaces the
  *   server's copy, so they carry cumulative totals and can be put again as listening continues.
  *
- * `updatedAt` is our clock; comparisons with the server's timestamps correct for the skew between the two.
+ * `updatedAt` is our clock; comparisons with the server's timestamps correct for the skew between the two. The
+ * server keeps one timestamp for listening and reading alike, though, so a newer one only means another device
+ * listened on if its position has also moved from where ours carried on from (`baseTime`, a session's `startTime`).
  */
 export type OutboxEntry =
   | {
@@ -23,11 +25,29 @@ export type OutboxEntry =
       isFinished?: boolean;
       sessionId?: string;
       timeListened?: number;
+      /** The server's position this one carries on from, when known. */
+      baseTime?: number;
       updatedAt: number;
     }
   | { kind: 'session'; session: abs.LocalSession };
 
 type ProgressEntry = Extract<OutboxEntry, { kind: 'progress' }>;
+
+export interface PendingProgress {
+  currentTime: number;
+  duration: number;
+  isFinished?: boolean;
+  baseTime?: number;
+  updatedAt: number;
+}
+
+/**
+ * Whether the server's listening position has moved on from where a waiting one carried on from: another device
+ * listened since. Unknown bases count as moved.
+ */
+export function listenedElsewhere(server: { currentTime: number }, baseTime: number | undefined) {
+  return baseTime === undefined || Math.abs(server.currentTime - baseTime) > 1;
+}
 
 const KEY = 'lectern.outbox';
 const RETRY_MS = 30_000;
@@ -87,16 +107,16 @@ class Outbox {
   }
 
   /** The newest position waiting to go out for an item, if any, in our clock. */
-  pendingFor(itemId: string, episodeId: string | null): { currentTime: number; duration: number; isFinished?: boolean; updatedAt: number } | null {
-    let best: { currentTime: number; duration: number; isFinished?: boolean; updatedAt: number } | null = null;
+  pendingFor(itemId: string, episodeId: string | null): PendingProgress | null {
+    let best: PendingProgress | null = null;
     for (const e of Object.values(this.entries)) {
-      const p =
+      const p: PendingProgress | null =
         e.kind === 'progress'
           ? e.itemId === itemId && e.episodeId === episodeId
             ? e
             : null
           : e.session.libraryItemId === itemId && (e.session.episodeId ?? null) === episodeId
-            ? e.session
+            ? { ...e.session, baseTime: e.session.startTime }
             : null;
       if (p && (!best || p.updatedAt > best.updatedAt)) best = p;
     }
@@ -139,11 +159,18 @@ async function send(e: OutboxEntry) {
   if (e.kind === 'session') {
     const s = e.session;
     // The server only moves progress on if the session is newer than what it has, by its own clock.
-    return abs.syncLocalSession({ ...s, startedAt: s.startedAt + skew, updatedAt: s.updatedAt + skew });
+    await abs.syncLocalSession({ ...s, startedAt: s.startedAt + skew, updatedAt: s.updatedAt + skew });
+    // It also refuses when another device only saved a reading position since. If nobody listened elsewhere
+    // (the server is still where this session started), the position is ours to set.
+    const server = await abs.getProgress(s.libraryItemId, s.episodeId ?? null);
+    if (server && Math.abs(server.currentTime - s.currentTime) > 1 && !listenedElsewhere(server, s.startTime)) {
+      await abs.updateProgress(s.libraryItemId, positionPayload(s.currentTime, s.duration), s.episodeId ?? null);
+    }
+    return;
   }
   const server = await abs.getProgress(e.itemId, e.episodeId);
-  // Another device moved on since: its position wins.
-  const newer = !!server && server.lastUpdate > e.updatedAt + skew;
+  // Another device listened on since: its position wins.
+  const newer = !!server && server.lastUpdate > e.updatedAt + skew && listenedElsewhere(server, e.baseTime);
   if (e.sessionId && e.isFinished === undefined) {
     // The session is still open on the server unless it restarted since: closing it credits the listening time
     // too. If another device moved on, close it at their position so ours doesn't win.
@@ -167,15 +194,11 @@ async function send(e: OutboxEntry) {
     // Sent alone, like marking it from the item page: with a position the server may decide it's unfinished again.
     return abs.updateProgress(e.itemId, e.isFinished ? { isFinished: true } : { isFinished: false, progress: 0, currentTime: 0 }, e.episodeId);
   }
-  await abs.updateProgress(
-    e.itemId,
-    {
-      currentTime: e.currentTime,
-      duration: e.duration,
-      progress: e.duration ? Math.min(1, e.currentTime / e.duration) : 0
-    },
-    e.episodeId
-  );
+  await abs.updateProgress(e.itemId, positionPayload(e.currentTime, e.duration), e.episodeId);
+}
+
+function positionPayload(currentTime: number, duration: number) {
+  return { currentTime, duration, progress: duration ? Math.min(1, currentTime / duration) : 0 };
 }
 
 export const outbox = new Outbox();

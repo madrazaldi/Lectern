@@ -130,6 +130,17 @@ describe('applying the server’s copy of the user', () => {
     expect(session.progressFor('a')?.currentTime).toBe(900);
   });
 
+  it('keeps progress listened offline when another device only saved a reading position since', async () => {
+    localStorage.setItem(
+      'lectern.outbox.acc',
+      JSON.stringify({ 'progress:a': { kind: 'progress', itemId: 'a', episodeId: null, currentTime: 600, duration: 1000, baseTime: 100, updatedAt: 1000 } })
+    );
+    api.getMe.mockResolvedValue(user([progress('a', 100, Date.now(), { ebookLocation: 'cfi-elsewhere' })]));
+    api.getProgress.mockReturnValue(new Promise(() => {}));
+    await session.load();
+    expect(session.progressFor('a')).toMatchObject({ currentTime: 600, ebookLocation: 'cfi-elsewhere' });
+  });
+
   it('shows a pending finished mark', async () => {
     await startOffline([progress('a', 100, 1)]);
     api.updateProgress.mockRejectedValue(offline());

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PositionSync, startPosition, type Position } from './sync';
+import { overtaken, PositionSync, startPosition, type Position } from './sync';
 
 class Offline extends Error {}
 
@@ -102,6 +102,27 @@ describe('PositionSync', () => {
     expect(JSON.parse(storage.getItem('pending')!)).toEqual({});
   });
 
+  it('records the server position each waiting one carries on from', async () => {
+    const { sync, send, tick } = setup();
+    send.mockRejectedValue(new Offline());
+    sync.seen('a', 'server-1');
+    sync.update('a', at('cfi-1'));
+    await vi.advanceTimersByTimeAsync(2000);
+    // Still unsent: later positions carry on from the same server position.
+    sync.update('a', at('cfi-2'));
+    expect(sync.pending('a')).toMatchObject({ location: 'cfi-2', base: 'server-1' });
+
+    // Once one gets through, a position written meanwhile carries on from it.
+    let finish!: () => void;
+    send.mockImplementationOnce(() => new Promise<void>((r) => (finish = r)));
+    const sending = sync.flush('a');
+    tick();
+    sync.update('a', at('cfi-3'));
+    finish();
+    await sending;
+    expect(sync.pending('a')).toMatchObject({ location: 'cfi-3', base: 'cfi-2' });
+  });
+
   it('survives an unreadable store', () => {
     const { sync, storage } = setup();
     storage.setItem('pending', '{nope');
@@ -126,5 +147,27 @@ describe('startPosition', () => {
     // Our clock runs 2s behind the server's: the local position is actually newer.
     expect(startPosition(server, pending, 2_000)?.location).toBe('local');
     expect(startPosition(null, pending)?.location).toBe('local');
+  });
+});
+
+describe('overtaken', () => {
+  const pending = { location: 'mine', progress: 0.6, updatedAt: 1_000, base: 'before' };
+
+  it('keeps a waiting position when only the shared timestamp moved (listening, say)', () => {
+    expect(overtaken(pending, { ebookLocation: 'before', lastUpdate: 99_000 })).toBe(false);
+    expect(startPosition({ ebookLocation: 'before', ebookProgress: 0.2, lastUpdate: 99_000 }, pending)?.location).toBe('mine');
+  });
+
+  it('drops it once the server’s reading position moved elsewhere, however old', () => {
+    expect(overtaken(pending, { ebookLocation: 'elsewhere', lastUpdate: 1 })).toBe(true);
+    expect(overtaken({ ...pending, base: null }, { ebookLocation: 'elsewhere', lastUpdate: 1 })).toBe(true);
+    expect(overtaken(pending, { ebookLocation: 'mine', lastUpdate: 99_000 })).toBe(false);
+    expect(overtaken(pending, { ebookLocation: null, lastUpdate: 99_000 })).toBe(false);
+  });
+
+  it('compares timestamps for positions saved without a base', () => {
+    const legacy = { location: 'mine', progress: 0.6, updatedAt: 1_000 };
+    expect(overtaken(legacy, { ebookLocation: 'elsewhere', lastUpdate: 2_000 })).toBe(true);
+    expect(overtaken(legacy, { ebookLocation: 'elsewhere', lastUpdate: 500 })).toBe(false);
   });
 });

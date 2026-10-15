@@ -722,6 +722,7 @@ class Player {
       duration: this.duration,
       sessionId: this.session.id,
       timeListened: Math.round(this.listened),
+      ...(this.lastSentTime >= 0 ? { baseTime: this.lastSentTime } : {}),
       updatedAt: Date.now()
     });
   }

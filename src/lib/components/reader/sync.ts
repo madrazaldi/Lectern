@@ -7,6 +7,19 @@ export interface Position {
 export interface PendingPosition extends Position {
   /** Our clock, when the reader got there. */
   updatedAt: number;
+  /**
+   * The server's position this one carries on from (null: it had none). The server keeps one timestamp for audio
+   * and ebook progress alike, so this, not the timestamp, tells whether someone has read on elsewhere since.
+   * Missing on positions saved by older versions.
+   */
+  base?: string | null;
+}
+
+/** The server's ebook progress, as far as deciding between it and a waiting position goes. */
+export interface ServerPosition {
+  ebookLocation?: string | null;
+  ebookProgress?: number | null;
+  lastUpdate: number;
 }
 
 export interface StorageLike {
@@ -33,6 +46,8 @@ export interface PositionSyncOptions {
  */
 export class PositionSync {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** The server's position for each item as last seen (opening the book, or confirming a send). */
+  private bases = new Map<string, string | null>();
   private flushing: Promise<void> | null = null;
   private readonly delay: number;
   private readonly now: () => number;
@@ -64,9 +79,17 @@ export class PositionSync {
     return this.read()[itemId] ?? null;
   }
 
+  /** The server's position for an item as just read, which the next new waiting position carries on from. */
+  seen(itemId: string, location: string | null) {
+    this.bases.set(itemId, location);
+  }
+
   /** The reader moved: keep the position and send it once reading pauses. */
   update(itemId: string, pos: Position) {
-    this.write({ ...this.read(), [itemId]: { location: pos.location, progress: pos.progress, updatedAt: this.now() } });
+    const all = this.read();
+    // The previous position is still unconfirmed, so the server is still where it was then.
+    const base = all[itemId]?.base !== undefined ? all[itemId].base : this.bases.get(itemId);
+    this.write({ ...all, [itemId]: { location: pos.location, progress: pos.progress, updatedAt: this.now(), ...(base !== undefined ? { base } : {}) } });
     clearTimeout(this.timers.get(itemId));
     this.timers.set(
       itemId,
@@ -96,19 +119,23 @@ export class PositionSync {
     this.timers.delete(itemId);
     const entry = this.pending(itemId);
     if (!entry) return true;
+    let sent = true;
     try {
       await this.opts.send(itemId, { location: entry.location, progress: entry.progress });
+      this.bases.set(itemId, entry.location);
     } catch (err) {
       if (this.opts.retryable(err)) return false;
       // The server refused it (the item is gone, say): retrying won't help.
       console.error('Could not save the reading position', err);
+      sent = false;
     }
-    // Keep a position written while this one was on its way.
     const all = this.read();
-    if (all[itemId]?.updatedAt === entry.updatedAt) {
-      delete all[itemId];
-      this.write(all);
-    }
+    const latest = all[itemId];
+    if (latest?.updatedAt === entry.updatedAt) delete all[itemId];
+    // Keep a position written while this one was on its way; it now carries on from this one.
+    else if (latest && sent) all[itemId] = { ...latest, base: entry.location };
+    else return true;
+    this.write(all);
     return true;
   }
 
@@ -132,15 +159,21 @@ export class PositionSync {
 }
 
 /**
- * Where to open: the position waiting to be sent if it's newer than the server's, else the server's.
- * `skew` is the server's clock minus ours.
+ * The server has another position than the waiting one, reached on another device since: the server's ebook
+ * position moved away from the one the waiting position carries on from. (A newer timestamp alone says nothing:
+ * listening bumps it too.) Positions without a base fall back to comparing timestamps; `skew` is the server's
+ * clock minus ours.
  */
-export function startPosition(
-  server: { ebookLocation?: string | null; ebookProgress?: number | null; lastUpdate: number } | undefined | null,
-  pending: PendingPosition | null,
-  skew = 0
-): Position | null {
-  if (pending && (!server?.ebookLocation || pending.updatedAt + skew > server.lastUpdate)) return { location: pending.location, progress: pending.progress };
+export function overtaken(entry: PendingPosition, server: ServerPosition | undefined | null, skew = 0) {
+  const theirs = server?.ebookLocation;
+  if (!theirs || theirs === entry.location) return false;
+  if (entry.base !== undefined) return theirs !== entry.base;
+  return server.lastUpdate > entry.updatedAt + skew;
+}
+
+/** Where to open: the position waiting to be sent unless the server has overtaken it, else the server's. */
+export function startPosition(server: ServerPosition | undefined | null, pending: PendingPosition | null, skew = 0): Position | null {
+  if (pending && !overtaken(pending, server, skew)) return { location: pending.location, progress: pending.progress };
   if (server?.ebookLocation) return { location: server.ebookLocation, progress: server.ebookProgress ?? 0 };
   return null;
 }

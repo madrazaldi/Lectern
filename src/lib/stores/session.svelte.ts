@@ -15,7 +15,7 @@ import {
   serverNow
 } from '$lib/api/client';
 import type { Bookmark, Library, MediaProgress, User } from '$lib/api/types';
-import { outbox } from './outbox.svelte';
+import { listenedElsewhere, outbox } from './outbox.svelte';
 
 const LIB_KEY = 'lectern.library';
 const CACHE_KEY = 'lectern.cache';
@@ -266,7 +266,8 @@ class Session {
       if (isUnreachable(err) || isAuthLost(err)) {
         // Offline (or waiting to sign in again): keep the change and send it later.
         const p = this.progressFor(itemId, episodeId)!;
-        outbox.putProgress({ itemId, episodeId, currentTime: p.currentTime, duration: p.duration, isFinished, updatedAt: Date.now() });
+        const baseTime = prev?.currentTime;
+        outbox.putProgress({ itemId, episodeId, currentTime: p.currentTime, duration: p.duration, isFinished, baseTime, updatedAt: Date.now() });
         return;
       }
       if (prev) this.progress[keyFor(itemId, episodeId)] = prev;
@@ -318,12 +319,15 @@ class Session {
   }
 }
 
-/** Overlay progress that's still waiting in the outbox (listened offline) on the server's older copy. */
+/**
+ * Overlay progress that's still waiting in the outbox (listened offline) on the server's older copy. A newer server
+ * copy only wins if another device listened since: reading an ebook moves its timestamp too.
+ */
 function withPending(p: MediaProgress): MediaProgress {
   const pending = outbox.pendingFor(p.libraryItemId, p.episodeId ?? null);
   if (!pending) return p;
-  const lastUpdate = pending.updatedAt + clockSkew();
-  if (lastUpdate <= p.lastUpdate) return p;
+  const lastUpdate = Math.max(p.lastUpdate, pending.updatedAt + clockSkew());
+  if (lastUpdate === p.lastUpdate && listenedElsewhere(p, pending.baseTime)) return p;
   const duration = pending.duration || p.duration;
   const isFinished = pending.isFinished ?? p.isFinished;
   return {
