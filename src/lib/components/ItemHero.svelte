@@ -9,7 +9,8 @@
   import { duration } from '$lib/util/format';
   import { toggleFinished } from '$lib/util/play';
   import Cover from './Cover.svelte';
-  import { canRead, ebookFormat, formatOf, hasAudio, otherEbooks, readHref } from './reader/ebook';
+  import { canRead, ebookFormat, formatOf, hasAudio, otherEbooks, primaryEbook, readHref } from './reader/ebook';
+  import { openable } from './reader/kept';
 
   /** The top of a title's page: cover, series, title, people and facts. Book or podcast specifics go in `children`. */
   let { item, children }: { item: LibraryItem; children?: Snippet } = $props();
@@ -29,6 +30,10 @@
   const others = $derived(otherEbooks(item));
   const progress = $derived(session.progressFor(item.id));
   const readPct = $derived(progress?.ebookLocation ? Math.round((progress.ebookProgress ?? 0) * 100) : null);
+  // Ebooks open from the server; offline, only the one just read (still in memory) does.
+  const canOpen = $derived(openable(session.online, item.id, primaryEbook(item)?.ino));
+  const canOpenFile = (ino: string) => openable(session.online, item.id, ino);
+  const OFFLINE_TITLE = 'Reading needs your server, which can’t be reached right now';
   let marking = $state(false);
 
   async function finished() {
@@ -104,7 +109,13 @@
     {#if book && !audio}
       <div class="actions">
         {#if readable}
-          <a class="btn btn-primary btn-lg" href={readHref(item.id)} class:disabled={item.isMissing} aria-disabled={item.isMissing}>
+          <a
+            class="btn btn-primary btn-lg"
+            href={readHref(item.id)}
+            class:disabled={item.isMissing || !canOpen}
+            aria-disabled={item.isMissing || !canOpen}
+            title={canOpen ? undefined : OFFLINE_TITLE}
+          >
             <BookOpenText size={18} />
             {readPct !== null ? 'Continue reading' : 'Read'}
           </a>
@@ -118,7 +129,9 @@
       {@render children?.()}
       {#if readable}
         <p class="read">
-          <a class="btn btn-quiet" href={readHref(item.id)}><BookOpenText size={16} /> {readPct !== null ? 'Continue reading the ebook' : 'Read the ebook'}</a>
+          <a class="btn btn-quiet" href={readHref(item.id)} class:disabled={!canOpen} aria-disabled={!canOpen} title={canOpen ? undefined : OFFLINE_TITLE}
+            ><BookOpenText size={16} /> {readPct !== null ? 'Continue reading the ebook' : 'Read the ebook'}</a
+          >
           {#if readPct !== null}<span class="faint num">{readPct}% read</span>{/if}
         </p>
       {/if}
@@ -126,7 +139,12 @@
     {#if others.length}
       <p class="others faint">
         Also as
-        {#each others as f, i (f.ino)}{i ? ', ' : ' '}<a href={readHref(item.id, f.ino)} title={f.metadata.filename}>{formatOf(f).toUpperCase()}</a>{/each}
+        {#each others as f, i (f.ino)}{i ? ', ' : ' '}<a
+            href={readHref(item.id, f.ino)}
+            class:disabled={!canOpenFile(f.ino)}
+            aria-disabled={!canOpenFile(f.ino)}
+            title={canOpenFile(f.ino) ? f.metadata.filename : OFFLINE_TITLE}>{formatOf(f).toUpperCase()}</a
+          >{/each}
       </p>
     {/if}
   </div>
@@ -223,7 +241,7 @@
     gap: 10px;
     margin-top: 28px;
   }
-  .actions .disabled {
+  .disabled {
     pointer-events: none;
     opacity: 0.5;
   }
