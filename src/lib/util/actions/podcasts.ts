@@ -7,6 +7,7 @@ import * as abs from '$lib/api/abs';
 import { isAuthLost, isUnreachable, serverNow } from '$lib/api/client';
 import type { LibraryItem, MediaProgress, PodcastEpisode } from '$lib/api/types';
 import { isPodcast } from '$lib/api/types';
+import { positions } from '$lib/components/reader/positions.svelte';
 import { player } from '$lib/stores/player.svelte';
 import { session } from '$lib/stores/session.svelte';
 import { errorMessage, toast } from '$lib/stores/toast.svelte';
@@ -15,10 +16,10 @@ import { plural } from '$lib/util/format';
 import { registerItemAction } from '$lib/util/itemActions';
 import { podcastPermissions } from '$lib/util/podcastFeed';
 
-/** Progress worth resetting: something listened to, and not what's playing (which would write it straight back). */
+/** Progress worth resetting: something listened to or read, and not what's playing (which would write it straight back). */
 function resettable(itemId: string, episodeId: string | null) {
   const p = session.progressFor(itemId, episodeId);
-  if (!p || (!p.isFinished && !p.currentTime && !p.progress)) return null;
+  if (!p || (!p.isFinished && !p.currentTime && !p.progress && !p.ebookProgress)) return null;
   return player.isCurrent(itemId, episodeId) ? null : p;
 }
 
@@ -32,6 +33,8 @@ export async function resetProgress(itemId: string, episodeId: string | null, ti
     const id = local ? (await abs.getProgress(itemId, episodeId))?.id : before.id;
     if (id) await abs.deleteProgress(id);
     session.forgetProgress(itemId, episodeId);
+    // A reading position still on its way would put the progress straight back.
+    if (!episodeId) positions.discard(itemId);
     toast(`Reset progress on ${title}.`, { action: { label: 'Undo', run: () => void restore(before) } });
   } catch (err) {
     toast(`Couldn't reset progress. ${errorMessage(err)}`, { tone: 'error' });
@@ -39,7 +42,8 @@ export async function resetProgress(itemId: string, episodeId: string | null, ti
 }
 
 async function restore(p: MediaProgress) {
-  const patch = { currentTime: p.currentTime, duration: p.duration, progress: p.progress, isFinished: p.isFinished };
+  const patch: Partial<MediaProgress> = { currentTime: p.currentTime, duration: p.duration, progress: p.progress, isFinished: p.isFinished };
+  if (p.ebookLocation) Object.assign(patch, { ebookLocation: p.ebookLocation, ebookProgress: p.ebookProgress ?? 0 });
   try {
     await abs.updateProgress(p.libraryItemId, patch, p.episodeId);
     session.patchProgress(p.libraryItemId, p.episodeId, patch);
