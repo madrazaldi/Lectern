@@ -61,5 +61,12 @@
     ],
     "category": "Music",
     "shortDescription": "A desktop listening room for Audiobookshelf"
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["audiobookshelf", "lectern"]
+      }
+    }
   }
 }

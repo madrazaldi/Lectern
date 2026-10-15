@@ -8,6 +8,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
     "opener:default",
+    "deep-link:default",
     "window-state:default",
     {
       "identifier": "http:default",
