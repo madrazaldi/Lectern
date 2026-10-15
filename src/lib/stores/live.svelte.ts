@@ -32,6 +32,9 @@ class Live {
   private retry: ReturnType<typeof setTimeout> | null = null;
   private itemListeners = new Set<(change: ItemChange, item: LibraryItem) => void>();
   private episodeListeners = new Set<(event: EpisodeEvent) => void>();
+  private resyncListeners = new Set<() => void>();
+  /** The feed has been up since connect() was asked for: coming up again means events may have been missed. */
+  private initialized = false;
 
   constructor() {
     // A different user: the socket is authenticated as the old one.
@@ -60,15 +63,18 @@ class Live {
     const s = io(url.origin, { path: `${base}/socket.io`, transports: ['websocket'], reconnectionDelayMax: 30_000 });
     this.socket = s;
     let refused = 0;
-    let initialized = false;
 
     s.on('connect', () => s.emit('auth', token()));
     s.on('init', () => {
       this.connected = true;
       refused = 0;
-      // Back after a drop (network, server restart): anything sent meanwhile was missed, so re-read progress.
-      if (initialized) void session.refreshUser(CATCH_UP_MS);
-      initialized = true;
+      // Back after a drop (network, server restart, a refused token): anything sent meanwhile was missed, so
+      // re-read progress and let others re-read what they follow.
+      if (this.initialized) {
+        void session.refreshUser(CATCH_UP_MS);
+        for (const fn of this.resyncListeners) fn();
+      }
+      this.initialized = true;
     });
     s.on('auth_failed', async () => {
       if (this.socket !== s) return;
@@ -116,6 +122,7 @@ class Live {
 
   disconnect() {
     this.wanted = false;
+    this.initialized = false;
     this.clearRetry();
     this.teardown();
   }
@@ -138,6 +145,12 @@ class Live {
   onItemChange(fn: (change: ItemChange, item: LibraryItem) => void) {
     this.itemListeners.add(fn);
     return () => void this.itemListeners.delete(fn);
+  }
+
+  /** Called when the feed comes back after a drop, since events sent meanwhile were missed. Returns an unsubscribe function. */
+  onResync(fn: () => void) {
+    this.resyncListeners.add(fn);
+    return () => void this.resyncListeners.delete(fn);
   }
 
   /** Subscribe to the server's podcast episode downloads. Returns an unsubscribe function. */

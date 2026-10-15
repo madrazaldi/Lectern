@@ -2,12 +2,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EpisodeDownload } from '$lib/api/types';
 
-const hooks = vi.hoisted(() => ({ accountChanged: [] as (() => void)[], reconnect: [] as (() => unknown)[] }));
+const hooks = vi.hoisted(() => ({ accountChanged: [] as (() => void)[], reconnect: [] as (() => unknown)[], resync: [] as (() => void)[] }));
 const api = vi.hoisted(() => ({ getEpisodeDownloadQueue: vi.fn() }));
 
 vi.mock('$lib/api/abs', () => api);
 vi.mock('$lib/api/client', () => ({ onAccountChanged: (fn: () => void) => void hooks.accountChanged.push(fn) }));
-vi.mock('./live.svelte', () => ({ live: { onEpisodeEvent: () => () => {} } }));
+vi.mock('./live.svelte', () => ({ live: { onEpisodeEvent: () => () => {}, onResync: (fn: () => void) => void hooks.resync.push(fn) } }));
 vi.mock('./session.svelte', () => ({ session: { onReconnect: (fn: () => unknown) => void hooks.reconnect.push(fn) } }));
 
 const { episodeDownloads } = await import('./episodeDownloads.svelte');
@@ -31,6 +31,15 @@ describe('episodeDownloads', () => {
     // The old account's library isn't read again for the new one.
     await Promise.all(hooks.reconnect.map((fn) => fn()));
     expect(api.getEpisodeDownloadQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the queue again when the live feed comes back after a drop', async () => {
+    api.getEpisodeDownloadQueue.mockResolvedValue({ currentDownload: download('d1'), queue: [] });
+    await episodeDownloads.load('pods');
+    api.getEpisodeDownloadQueue.mockResolvedValue({ currentDownload: null, queue: [download('d3')] });
+    hooks.resync.forEach((fn) => fn());
+    await vi.waitFor(() => expect(episodeDownloads.forItem('p1').queued.map((d) => d.id)).toEqual(['d3']));
+    expect(api.getEpisodeDownloadQueue).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a queue read for the previous account that lands after the change', async () => {
