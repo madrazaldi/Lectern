@@ -90,8 +90,7 @@
       scrollBeforeMini = main?.scrollTop ?? 0;
       player.expanded = false;
       contextMenu.close(false);
-      dialogs.shortcuts = false;
-      dialogs.playlist = null;
+      dialogs.closeAll();
     });
   });
 

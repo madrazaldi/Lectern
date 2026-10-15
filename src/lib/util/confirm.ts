@@ -1,5 +1,6 @@
 import { mount, unmount } from 'svelte';
 import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+import { dialogs } from './dialogs.svelte';
 
 export interface ConfirmOptions {
   title: string;
@@ -20,17 +21,18 @@ export interface ConfirmResult {
  */
 export function confirmDialog(opts: ConfirmOptions): Promise<ConfirmResult | null> {
   return new Promise((resolve) => {
-    const app = mount(ConfirmDialog, {
-      target: document.body,
-      props: {
-        ...opts,
-        onanswer: (r: ConfirmResult | null) => {
-          resolve(r);
-          // Not from inside its own close handler.
-          setTimeout(() => void unmount(app));
-        }
-      }
-    });
+    let answered = false;
+    const answer = (r: ConfirmResult | null) => {
+      if (answered) return;
+      answered = true;
+      release();
+      resolve(r);
+      // Not from inside its own close handler.
+      setTimeout(() => void unmount(app));
+    };
+    const app = mount(ConfirmDialog, { target: document.body, props: { ...opts, onanswer: answer } });
+    // Dismissed from outside (going to the mini player): the same as Cancel.
+    const release = dialogs.track(() => answer(null));
   });
 }
 

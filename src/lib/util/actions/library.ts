@@ -4,6 +4,7 @@ import { mount, unmount } from 'svelte';
 import { isBook } from '$lib/api/types';
 import CollectionDialog from '$lib/components/CollectionDialog.svelte';
 import { session } from '$lib/stores/session.svelte';
+import { dialogs } from '../dialogs.svelte';
 import { registerItemAction } from '../itemActions';
 
 // The server checks these permissions, not the account type: an admin without "update" can't edit collections either.
@@ -12,23 +13,24 @@ export const canDeleteCollections = () => session.user?.permissions?.delete === 
 /** Deleting a listening session needs the delete permission. */
 export const canDeleteSessions = () => session.user?.permissions?.delete === true;
 
-let open: ReturnType<typeof mount> | null = null;
+/** Closes the picker that's open, if any. */
+let closeOpen: (() => void) | null = null;
 
 /** Show the collection picker for some books, outside any page (it's opened from context menus). */
 export function openCollectionPicker(target: { libraryId: string; itemIds: string[]; title: string }) {
-  if (open) void unmount(open);
-  const dialog = mount(CollectionDialog, {
-    target: document.body,
-    props: {
-      ...target,
-      onclose: () => {
-        if (open === dialog) open = null;
-        // Not from inside its own close handler.
-        setTimeout(() => void unmount(dialog));
-      }
-    }
-  });
-  open = dialog;
+  closeOpen?.();
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    release();
+    if (closeOpen === close) closeOpen = null;
+    // Not from inside its own close handler.
+    setTimeout(() => void unmount(dialog));
+  };
+  const dialog = mount(CollectionDialog, { target: document.body, props: { ...target, onclose: close } });
+  const release = dialogs.track(close);
+  closeOpen = close;
 }
 
 registerItemAction({
