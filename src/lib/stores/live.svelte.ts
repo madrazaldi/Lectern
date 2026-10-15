@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import { ensureFreshToken, getCredentials, needsReauth, onAccountChanged, onTokenChange, token } from '$lib/api/client';
-import type { LibraryItem, MediaProgress } from '$lib/api/types';
+import type { EpisodeDownload, LibraryItem, MediaProgress } from '$lib/api/types';
+import type { EpisodeEvent } from '$lib/util/podcastFeed';
 import { player } from './player.svelte';
 import { session } from './session.svelte';
 
@@ -30,6 +31,7 @@ class Live {
   private wanted = false;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private itemListeners = new Set<(change: ItemChange, item: LibraryItem) => void>();
+  private episodeListeners = new Set<(event: EpisodeEvent) => void>();
 
   constructor() {
     // A different user: the socket is authenticated as the old one.
@@ -100,6 +102,16 @@ class Live {
     s.on('item_removed', relay('removed'));
     s.on('items_added', (items: LibraryItem[]) => items.forEach(relay('added')));
     s.on('items_updated', (items: LibraryItem[]) => items.forEach(relay('updated')));
+
+    // The server downloading podcast episodes.
+    const episode = (event: EpisodeEvent) => {
+      for (const fn of this.episodeListeners) fn(event);
+    };
+    s.on('episode_download_queued', (download: EpisodeDownload) => episode({ type: 'queued', download }));
+    s.on('episode_download_started', (download: EpisodeDownload) => episode({ type: 'started', download }));
+    s.on('episode_download_finished', (download: EpisodeDownload) => episode({ type: 'finished', download }));
+    s.on('episode_download_queue_cleared', (libraryItemId: string) => episode({ type: 'cleared', libraryItemId }));
+    s.on('episode_added', (ep: Extract<EpisodeEvent, { type: 'added' }>['episode']) => episode({ type: 'added', episode: ep }));
   }
 
   disconnect() {
@@ -126,6 +138,12 @@ class Live {
   onItemChange(fn: (change: ItemChange, item: LibraryItem) => void) {
     this.itemListeners.add(fn);
     return () => void this.itemListeners.delete(fn);
+  }
+
+  /** Subscribe to the server's podcast episode downloads. Returns an unsubscribe function. */
+  onEpisodeEvent(fn: (event: EpisodeEvent) => void) {
+    this.episodeListeners.add(fn);
+    return () => void this.episodeListeners.delete(fn);
   }
 }
 

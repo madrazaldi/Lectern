@@ -200,6 +200,70 @@ export interface LocalSession {
 
 export const syncLocalSession = (s: LocalSession) => request<void>('/api/session/local', { method: 'POST', body: s });
 
+// --- podcasts ---
+
+// Imported here rather than above so this block merges cleanly alongside other workstreams' blocks.
+import type {
+  EpisodeDownload,
+  FeedEpisode,
+  LibraryWithFolders,
+  NewPodcast,
+  PodcastAutoDownload,
+  PodcastFeed,
+  PodcastSearchResult,
+  RecentEpisode
+} from './types';
+
+/** A library with its folders (where a new podcast can go). */
+export const getLibrary = (id: string, signal?: AbortSignal) => request<LibraryWithFolders>(`/api/libraries/${id}`, { signal });
+
+/** iTunes podcast search, through the server. */
+export const searchPodcasts = (term: string, signal?: AbortSignal) =>
+  request<PodcastSearchResult[] | null>('/api/search/podcast', { query: { term }, signal, timeout: LONG }).then((r) => r ?? []);
+
+/** The server fetches and parses an RSS feed (admins only). */
+export const getPodcastFeed = (rssFeed: string, signal?: AbortSignal) =>
+  request<{ podcast: PodcastFeed }>('/api/podcasts/feed', { method: 'POST', body: { rssFeed }, signal, timeout: LONG }).then((r) => r.podcast);
+
+export const createPodcast = (payload: NewPodcast) => request<LibraryItem>('/api/podcasts', { method: 'POST', body: payload, timeout: LONG });
+
+/** Look for episodes newer than the last check and queue them for download. Resolves to what was queued. */
+export const checkNewEpisodes = (itemId: string, limit?: number) =>
+  request<{ episodes: FeedEpisode[] }>(`/api/podcasts/${itemId}/checknew`, { query: { limit }, timeout: LONG }).then((r) => r.episodes);
+
+export const downloadEpisodes = (itemId: string, episodes: FeedEpisode[]) =>
+  request<void>(`/api/podcasts/${itemId}/download-episodes`, { method: 'POST', body: episodes });
+
+export const clearEpisodeQueue = (itemId: string) => request<void>(`/api/podcasts/${itemId}/clear-queue`);
+
+/** What the server is downloading for a library right now, and what waits behind it. */
+export const getEpisodeDownloadQueue = (libraryId: string) =>
+  request<{ currentDownload?: EpisodeDownload | null; queue: EpisodeDownload[] }>(`/api/libraries/${libraryId}/episode-downloads`);
+
+/** Remove an episode from the server; `hard` also deletes its audio file. */
+export const deleteEpisode = (itemId: string, episodeId: string, hard = false) =>
+  request<LibraryItem>(`/api/podcasts/${itemId}/episode/${episodeId}`, { method: 'DELETE', query: { hard: hard ? 1 : undefined } });
+
+export const updatePodcastMedia = (itemId: string, patch: Partial<PodcastAutoDownload>) =>
+  request<{ updated: boolean; libraryItem: LibraryItem }>(`/api/items/${itemId}/media`, { method: 'PATCH', body: patch });
+
+/** Newest unfinished episodes across a podcast library. The server doesn't say how many there are. */
+export const getRecentEpisodes = (libraryId: string, page: number, limit: number, signal?: AbortSignal) =>
+  request<{ episodes: RecentEpisode[] }>(`/api/libraries/${libraryId}/recent-episodes`, { query: { page, limit }, signal, timeout: LONG }).then(
+    (r) => r.episodes
+  );
+
+export interface ProgressUpdate extends Partial<MediaProgress> {
+  libraryItemId: string;
+  episodeId?: string | null;
+}
+
+export const batchUpdateProgress = (updates: ProgressUpdate[]) =>
+  request<void>('/api/me/progress/batch/update', { method: 'PATCH', body: updates, timeout: LONG });
+
+/** Forget a title's progress entirely (by the progress record's own id). */
+export const deleteProgress = (progressId: string) => request<void>(`/api/me/progress/${progressId}`, { method: 'DELETE' });
+
 // --- library ---
 
 // Kept with this block (rather than in the list at the top) so parallel workstreams don't collide there.

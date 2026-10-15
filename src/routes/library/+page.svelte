@@ -9,7 +9,7 @@
 </script>
 
 <script lang="ts">
-  import { ArrowDownWideNarrow, ArrowUpNarrowWide, LayoutGrid, Layers, List, Search, Shuffle, X } from '@lucide/svelte';
+  import { ArrowDownWideNarrow, ArrowUpNarrowWide, LayoutGrid, Layers, List, Plus, Search, Shuffle, X } from '@lucide/svelte';
   import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -28,6 +28,7 @@
   import { session } from '$lib/stores/session.svelte';
   import { plural } from '$lib/util/format';
   import { PagedList } from '$lib/util/paged.svelte';
+  import { podcastPermissions } from '$lib/util/podcastFeed';
   import { resource } from '$lib/util/resource.svelte';
   import { roving } from '$lib/util/roving';
   import { newSeed, shuffled } from '$lib/util/shuffle';
@@ -214,6 +215,12 @@
     {#if added && !searching}
       <button class="fresh" onclick={refresh}>{plural(added, 'new title')} added · Refresh</button>
     {/if}
+    {#if !isBooks}
+      <nav class="podcast-links" aria-label="Podcasts">
+        <a class="btn btn-quiet" href="/podcasts/latest">Latest episodes</a>
+        {#if podcastPermissions(session.user).manage}<a class="btn btn-quiet" href="/podcasts/add"><Plus size={15} /> Add podcast</a>{/if}
+      </nav>
+    {/if}
   </header>
 
   <div class="toolbar">
@@ -367,6 +374,12 @@
     display: flex;
     align-items: baseline;
     gap: 14px;
+  }
+  .podcast-links {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    align-self: center;
   }
   .fresh {
     font-size: var(--t-sm);

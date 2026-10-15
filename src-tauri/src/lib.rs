@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 
 use app_state::{AppState, focus_main_window, request_quit};
 use tauri::{Manager, RunEvent, WindowEvent};
+use tauri_plugin_window_state::StateFlags;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -15,10 +16,16 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Decorations come from the config: the mini player turns them off, and must not leave them off for the next launch.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::all() - StateFlags::DECORATIONS)
+                .build(),
+        )
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .manage(menu::MiniItems::default())
         .on_menu_event(menu::handle_menu_event)
         .on_window_event(|window, event| {
             if window.label() != "main" {
@@ -48,6 +55,7 @@ pub fn run() {
             app_state::set_close_behavior,
             app_state::show_main_window,
             menu::set_now_playing,
+            menu::set_mini_menu,
             secrets::secret_get,
             secrets::secret_set,
             secrets::secret_delete,

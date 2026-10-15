@@ -57,6 +57,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'forward', label: 'Forward', group: 'Navigation', combos: [{ key: ']', mod: true, native: true }] },
   { id: 'settings', label: 'Settings', group: 'Navigation', href: '/settings', combos: [{ key: ',', mod: true, native: true }] },
 
+  { id: 'mini-player', label: 'Switch to or from the mini player', group: 'General', combos: [{ key: 'm', mod: true, shift: true, native: true }] },
   { id: 'help', label: 'Show keyboard shortcuts', group: 'General', combos: [{ key: '?' }] },
   { id: 'close', label: 'Close Now Playing, a menu or a dialog', group: 'General', combos: [{ key: 'Escape' }] },
   { id: 'context-menu', label: 'Actions for the focused title', group: 'General', combos: [{ key: 'F10', shift: true }] }
@@ -120,6 +121,12 @@ export function formatCombo(c: Combo, mac: boolean) {
   const key = KEY_NAMES[c.key] ?? (c.key.length === 1 ? c.key.toUpperCase() : c.key);
   if (mac) return `${c.mod ? '⌘' : ''}${c.shift ? '⇧' : ''}${key}`;
   return [c.mod && 'Ctrl', c.shift && 'Shift', key].filter(Boolean).join('+');
+}
+
+/** A shortcut's first key combination as people read it ("⌘⇧M"), for tooltips. */
+export function shortcutKeys(id: string, mac = isMacPlatform()) {
+  const c = SHORTCUTS.find((s) => s.id === id)?.combos[0];
+  return c ? formatCombo(c, mac) : '';
 }
 
 /** The ⌘ / Ctrl label for this platform. */

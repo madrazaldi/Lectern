@@ -1,5 +1,15 @@
 export type Theme = 'system' | 'dark' | 'light';
 
+/** A window's place on screen, in physical pixels. */
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+  fullscreen: boolean;
+}
+
 export interface Prefs {
   theme: Theme;
   /** Let the playing book's cover colour the interface. */
@@ -23,6 +33,14 @@ export interface Prefs {
   autoContinue: boolean;
   /** Closing the window hides it and playback carries on from the menu bar. */
   keepPlayingWhenClosed: boolean;
+  /** The window is the compact mini player (and comes back that way on the next launch). */
+  miniMode: boolean;
+  /** Keep the mini player above other windows. */
+  miniPinned: boolean;
+  /** The full window's bounds from before it became the mini player, to return to. */
+  miniRestore: WindowBounds | null;
+  /** Where the mini player was last put (physical pixels). */
+  miniPosition: { x: number; y: number } | null;
 }
 
 const KEY = 'lectern.prefs';
@@ -42,7 +60,11 @@ const defaults: Prefs = {
   perItemSpeed: true,
   itemRates: {},
   autoContinue: true,
-  keepPlayingWhenClosed: true
+  keepPlayingWhenClosed: true,
+  miniMode: false,
+  miniPinned: true,
+  miniRestore: null,
+  miniPosition: null
 };
 
 function load(): Prefs {

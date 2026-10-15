@@ -312,6 +312,136 @@ export function isPodcast(item: LibraryItem): item is LibraryItem & { media: Pod
   return item.mediaType === 'podcast';
 }
 
+// --- podcasts ---
+
+export interface LibraryFolder {
+  id: string;
+  fullPath: string;
+  libraryId: string;
+}
+
+export type LibraryWithFolders = Library & { folders: LibraryFolder[] };
+
+/** An episode as the server stores it, with what identifies it in the feed it came from. */
+export type ServerEpisode = PodcastEpisode & {
+  guid?: string | null;
+  enclosure?: { url: string; type?: string | null; length?: string | null } | null;
+  addedAt?: number;
+};
+
+/** A podcast's auto-download settings (on the item's media). */
+export interface PodcastAutoDownload {
+  autoDownloadEpisodes: boolean;
+  /** Cron expression. */
+  autoDownloadSchedule: string | null;
+  /** 0 keeps every episode. */
+  maxEpisodesToKeep: number;
+  /** 0 downloads every new episode a check finds. */
+  maxNewEpisodesToDownload: number;
+  lastEpisodeCheck: number | null;
+}
+
+/** An iTunes search result, through the server (GET /api/search/podcast). */
+export interface PodcastSearchResult {
+  id: number;
+  artistId: number | null;
+  title: string;
+  artistName: string;
+  description: string;
+  descriptionPlain: string;
+  releaseDate: string;
+  genres: string[];
+  cover: string | null;
+  trackCount: number;
+  feedUrl: string | null;
+  pageUrl: string;
+  explicit: boolean;
+}
+
+export interface FeedMetadata {
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  descriptionPlain: string | null;
+  image: string | null;
+  categories: string[];
+  feedUrl: string;
+  language: string | null;
+  explicit: string | null;
+  type: string | null;
+  link: string | null;
+}
+
+/** An episode as the RSS feed lists it; this is also what the server takes to download one. */
+export interface FeedEpisode {
+  title: string;
+  subtitle: string;
+  description: string;
+  descriptionPlain: string;
+  pubDate: string;
+  episodeType: string;
+  season: string;
+  episode: string;
+  durationSeconds: number | null;
+  publishedAt: number;
+  enclosure: { url: string; type?: string; length?: string };
+  guid: string;
+  chapters?: unknown[];
+}
+
+export interface PodcastFeed {
+  metadata: FeedMetadata;
+  episodes: FeedEpisode[];
+}
+
+export interface NewPodcast {
+  path: string;
+  folderId: string;
+  libraryId: string;
+  media: {
+    metadata: {
+      title: string;
+      author: string;
+      description: string;
+      releaseDate: string;
+      genres: string[];
+      feedUrl: string;
+      imageUrl: string;
+      itunesPageUrl: string;
+      itunesId: string;
+      itunesArtistId: string;
+      language: string;
+      explicit: boolean;
+      type: string;
+    };
+    autoDownloadEpisodes: boolean;
+  };
+}
+
+/** One episode in the server's download queue. */
+export interface EpisodeDownload {
+  id: string;
+  episodeDisplayTitle: string | null;
+  url: string;
+  libraryItemId: string;
+  libraryId: string | null;
+  isFinished: boolean;
+  failed: boolean;
+  createdAt: number;
+  finishedAt: number | null;
+  podcastTitle: string | null;
+  season: string | null;
+  episode: string | null;
+  publishedAt: number | null;
+  guid: string | null;
+}
+
+/** An entry in a podcast library's "recent episodes", with its show attached. */
+export type RecentEpisode = ServerEpisode & {
+  podcast: PodcastMedia & { libraryItemId: string };
+  libraryId: string;
+};
+
 // --- library ---
 
 /** The device a listening session was recorded on, as the client described itself. */

@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { ChevronUp, LoaderCircle, Pause, Play, SkipBack, SkipForward } from '@lucide/svelte';
+  import { ChevronUp, LoaderCircle, Pause, Play, PictureInPicture2, SkipBack, SkipForward } from '@lucide/svelte';
   import { player } from '$lib/stores/player.svelte';
   import { prefs } from '$lib/stores/prefs.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { clock } from '$lib/util/format';
+  import { mini } from '$lib/util/miniMode';
+  import { shortcutKeys } from '$lib/util/shortcuts';
   import ChapterShelf from './ChapterShelf.svelte';
   import Cover from './Cover.svelte';
   import SkipIcon from './SkipIcon.svelte';
@@ -15,6 +17,7 @@
   const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (player.rate || 1));
   const marks = $derived(player.episode ? [] : session.bookmarksFor(item.id));
   const subtitle = $derived(player.episode ? player.author : player.chapters.length > 1 && player.chapter ? player.chapter.title : player.author);
+  const miniShortcut = shortcutKeys('mini-player');
 </script>
 
 <footer class="dock">
@@ -71,6 +74,10 @@
     <SpeedControl />
     <SleepControl showLabel />
     <VolumeControl />
+    <!-- Focus comes back here when the mini player is closed. -->
+    <button class="icon-btn" data-mini-toggle onclick={() => mini.enter()} aria-label="Mini player" title="Mini player ({miniShortcut})">
+      <PictureInPicture2 size={17} />
+    </button>
   </div>
 </footer>
 
