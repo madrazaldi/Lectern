@@ -1,4 +1,5 @@
 import { untrack } from 'svelte';
+import { onAccountChanged } from '$lib/api/client';
 
 /**
  * One request-backed value for a page: `data`, `error`, `loading` and `refresh()`, keyed by whatever the page
@@ -18,6 +19,14 @@ interface Entry {
 
 const MAX_ENTRIES = 120;
 const store = new Map<string, Entry>();
+/** Bumped when the signed-in account changes, so answers requested under the old one aren't cached. */
+let generation = 0;
+
+// Cached answers belong to the account that asked for them.
+onAccountChanged(() => {
+  generation++;
+  invalidate();
+});
 
 function remember(id: string, value: unknown) {
   // Re-insert so the Map's order doubles as least-recently-used.
@@ -129,11 +138,14 @@ export class Resource<K, T> {
     const key = this.#key as K;
     const id = this.#id!;
     const ctl = new AbortController();
+    const gen = generation;
     this.#ctl = ctl;
     this.loading = true;
     try {
       const value = await this.#opts.load(key, ctl.signal);
       if (ctl.signal.aborted || id !== this.#id) return;
+      // Asked for under the account signed in before: ask again as this one.
+      if (gen !== generation) return void queueMicrotask(() => void this.refresh());
       this.data = value;
       this.error = null;
       this.cause = null;

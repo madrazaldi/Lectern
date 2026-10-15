@@ -2,6 +2,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invalidate, peek, Resource, resource } from './resource.svelte';
 
+const accountChanged = vi.hoisted(() => [] as (() => void)[]);
+vi.mock('$lib/api/client', () => ({ onAccountChanged: (fn: () => void) => void accountChanged.push(fn) }));
+
 /** A load function whose answers the test settles by hand. */
 function deferredLoader<T>() {
   const calls: { key: string; signal: AbortSignal; resolve: (v: T) => void; reject: (e: unknown) => void }[] = [];
@@ -136,6 +139,27 @@ describe('Resource', () => {
       expect(again.loading).toBe(false);
       expect(load).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('forgets every cached answer when the account changes, including ones still on their way', async () => {
+    const { load, calls } = deferredLoader<string>();
+    const r = new Resource<string, string>({ load, id: (k) => `item:${k}` });
+    r.set('a');
+    calls[0].resolve('A');
+    await tick();
+    expect(peek('item:a')).toBe('A');
+    r.set('b');
+    for (const fn of accountChanged) fn();
+    expect(peek('item:a')).toBeUndefined();
+    // Requested under the old account: neither shown nor cached, but asked for again.
+    calls[1].resolve('old B');
+    await tick();
+    expect(r.data).toBeUndefined();
+    expect(calls.map((c) => c.key)).toEqual(['a', 'b', 'b']);
+    calls[2].resolve('B');
+    await tick();
+    expect(r.data).toBe('B');
+    expect(peek('item:b')).toBe('B');
   });
 
   it('idles on a null key', async () => {

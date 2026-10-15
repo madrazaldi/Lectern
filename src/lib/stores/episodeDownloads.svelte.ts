@@ -1,4 +1,5 @@
 import * as abs from '$lib/api/abs';
+import { onAccountChanged } from '$lib/api/client';
 import { emptyQueue, queueFor, reduceQueue, seedQueue } from '$lib/util/podcastFeed';
 import { live } from './live.svelte';
 import { session } from './session.svelte';
@@ -12,16 +13,25 @@ class EpisodeDownloads {
 
   /** Libraries read at least once; read again after a reconnect, since events sent meanwhile were missed. */
   private seen = new Set<string>();
+  /** Bumped on account change, so a queue read for the previous account isn't shown. */
+  private account = 0;
 
   constructor() {
     live.onEpisodeEvent((event) => (this.state = reduceQueue(this.state, event)));
     session.onReconnect(() => Promise.allSettled([...this.seen].map((id) => this.load(id))));
+    // Another account sees other libraries (and may not be allowed to see the queue at all).
+    onAccountChanged(() => {
+      this.account++;
+      this.seen.clear();
+      this.state = emptyQueue();
+    });
   }
 
   async load(libraryId: string) {
     this.seen.add(libraryId);
+    const account = this.account;
     const server = await abs.getEpisodeDownloadQueue(libraryId);
-    this.state = seedQueue(this.state, libraryId, server);
+    if (account === this.account) this.state = seedQueue(this.state, libraryId, server);
   }
 
   forItem(libraryItemId: string) {
