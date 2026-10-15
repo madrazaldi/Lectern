@@ -8,7 +8,10 @@ import type { User } from './types';
 // In a plain browser (vite dev without Tauri), the dev server relays requests instead; see vite.config.js.
 const httpFetch: typeof fetch = inTauri ? (tauriFetch as typeof fetch) : (input, init) => fetch(`/__abs_proxy?url=${encodeURIComponent(String(input))}`, init);
 
-export type AuthMethod = 'password' | 'apikey';
+export type AuthMethod = 'password' | 'apikey' | 'openid';
+
+/** Signed in with a session that renews itself with a refresh token (as opposed to an API key). */
+const usesRefreshToken = (method: AuthMethod) => method === 'password' || method === 'openid';
 
 export interface Credentials {
   serverUrl: string;
@@ -364,7 +367,7 @@ function abortError() {
  * fetch with a deadline covering the whole exchange, body included. The caller's own abort surfaces as an
  * AbortError; anything else that goes wrong (including the deadline) is left for `unreachableError` to describe.
  */
-async function timedFetch<T>(url: string, init: RequestInit & { timeout?: number }, read: (res: Response) => Promise<T>): Promise<T> {
+async function timedFetch<T>(url: string, init: RequestInit & { timeout?: number; maxRedirections?: number }, read: (res: Response) => Promise<T>): Promise<T> {
   const { timeout = DEFAULT_TIMEOUT_MS, signal: outer, ...rest } = init;
   if (outer?.aborted) throw abortError();
   const ctrl = new AbortController();
@@ -437,7 +440,7 @@ async function refreshAccessToken(): Promise<RefreshResult> {
   const account = creds;
   if (!account) return 'unavailable';
   if (authLost.has(account.id)) return 'rejected';
-  if (account.method !== 'password' || !account.refreshToken) return 'unavailable';
+  if (!usesRefreshToken(account.method) || !account.refreshToken) return 'unavailable';
   if (Date.now() < refreshRetryAt) return 'unreachable';
   refreshing ??= (async (): Promise<RefreshResult> => {
     let raw: Raw;
@@ -487,7 +490,7 @@ function jwtExpiry(jwt: string): number | null {
 
 /** Ask for a fresh access token now if it's about to expire (or `force`), e.g. before handing a stream URL to the audio element. */
 export async function ensureFreshToken(force = false) {
-  if (!creds || creds.method !== 'password') return;
+  if (!creds || !usesRefreshToken(creds.method)) return;
   const exp = jwtExpiry(creds.accessToken);
   // Not a JWT we can read: the 401 path still covers it.
   if (force || (exp !== null && exp - Date.now() < 5 * 60_000)) await refreshAccessToken();
@@ -601,6 +604,11 @@ export interface ServerStatus {
   serverVersion: string;
   isInit: boolean;
   authMethods: string[];
+  authFormData?: {
+    authLoginCustomMessage?: string;
+    authOpenIDButtonText?: string;
+    authOpenIDAutoLaunch?: boolean;
+  };
 }
 
 export async function probeServer(serverUrl: string): Promise<ServerStatus> {
@@ -710,14 +718,200 @@ export async function loginWithApiKey(serverUrl: string, apiKey: string) {
 export async function reauthenticate(accountId: string, secret: string): Promise<Account> {
   const account = vault.accounts.find((a) => a.id === accountId);
   if (!account) throw new ApiError(0, 'That account is no longer saved.');
+  if (account.method === 'openid') throw new ApiError(0, 'This account signs in through your browser. Use single sign-on.');
   const { account: fresh } =
     account.method === 'password' ? await passwordSignIn(account.serverUrl, account.username ?? '', secret) : await apiKeySignIn(account.serverUrl, secret);
   if (!sameUser(account, fresh)) throw new ApiError(0, `That key belongs to a different user. Use one for ${account.username ?? 'this account'}.`);
+  return signedInAgain(accountId, fresh);
+}
+
+async function signedInAgain(accountId: string, fresh: Omit<Account, 'id'>) {
   authLost.delete(accountId);
   refreshRetryAt = 0;
   await updateAccount(accountId, { accessToken: fresh.accessToken, refreshToken: fresh.refreshToken, username: fresh.username, userId: fresh.userId });
   if (creds?.id === accountId) for (const fn of tokenListeners) fn();
   return vault.accounts.find((a) => a.id === accountId)!;
+}
+
+// --- Single sign-on (OpenID Connect) ---
+// Audiobookshelf's flow for apps: we start it from our own HTTP client (keeping the session cookie it sets), the user
+// signs in at their identity provider in the browser, and the server hands the result back to us through a deep link.
+
+/**
+ * Where the server sends the browser back to. `audiobookshelf://oauth` is allowed by default on every server (it's the
+ * mobile app's); `lectern://oauth` is for servers whose admin removed that or prefers to name us.
+ */
+export const OPENID_REDIRECT_URIS = ['audiobookshelf://oauth', 'lectern://oauth'] as const;
+
+/** A sign-on waiting for the browser. Holds secrets: keep it in memory only. */
+export interface OpenIdPending {
+  serverUrl: string;
+  /** The identity provider's sign-in page, to open in the browser. */
+  authorizeUrl: string;
+  redirectUri: string;
+  state: string;
+  /** PKCE code verifier: proves to the server that whoever finishes the sign-in also started it. */
+  verifier: string;
+  /** The server's cookies from the start of the flow; finishing without them fails with "No session". */
+  cookie: string;
+}
+
+function base64url(bytes: Uint8Array) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** URL-safe random string with `bytes` of entropy (32 bytes makes a 43-character PKCE verifier). */
+export function randomToken(bytes = 32) {
+  return base64url(crypto.getRandomValues(new Uint8Array(bytes)));
+}
+
+/** PKCE S256 challenge for a verifier. */
+export async function pkceChallenge(verifier: string) {
+  return base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+}
+
+/** The cookies a response sets, as a `Cookie` header value to send back. */
+export function cookiesFrom(headers: Headers) {
+  // Older webviews lack getSetCookie(); there the values arrive joined with commas, which also appear inside Expires dates.
+  const lines = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : (headers.get('set-cookie')?.split(/,(?=\s*[^;,=\s]+=)/) ?? []);
+  return lines
+    .map((line) => line.split(';')[0].trim())
+    .filter((pair) => pair.indexOf('=') > 0)
+    .join('; ');
+}
+
+/** Whether a deep link is the server sending a sign-on back to us (as opposed to some other link). */
+export function isOpenIdCallback(pending: Pick<OpenIdPending, 'redirectUri'>, link: string) {
+  try {
+    const url = new URL(link);
+    const expected = new URL(pending.redirectUri);
+    return url.protocol === expected.protocol && url.host === expected.host;
+  } catch {
+    return false;
+  }
+}
+
+/** The authorization code from the deep link that ends a sign-on, after checking it belongs to this one. */
+export function parseOpenIdCallback(pending: Pick<OpenIdPending, 'redirectUri' | 'state'>, link: string) {
+  if (!isOpenIdCallback(pending, link)) throw new ApiError(0, 'That link isn’t a sign-in from your server.');
+  // ABS adds a trailing slash (audiobookshelf://oauth/?code=…); the query is all that matters.
+  const params = new URL(link).searchParams;
+  if (params.get('state') !== pending.state) {
+    throw new ApiError(0, 'That sign-in came from an earlier attempt. Finish signing in from the newest browser tab, or start again.');
+  }
+  const code = params.get('code');
+  // When the identity provider reports an error, ABS drops it and sends code=undefined.
+  if (!code || code === 'undefined' || params.has('error')) {
+    throw new ApiError(401, 'Your identity provider didn’t complete the sign-in. It may have been cancelled or refused; try again.');
+  }
+  return code;
+}
+
+/**
+ * Start signing in to `serverUrl` with single sign-on. Open `authorizeUrl` in the browser, then pass the deep link the
+ * browser comes back with to `completeOpenIdLogin` (or `reauthenticateWithOpenId`).
+ */
+export async function beginOpenIdLogin(serverUrl: string): Promise<OpenIdPending> {
+  for (const redirectUri of OPENID_REDIRECT_URIS) {
+    const verifier = randomToken();
+    const state = randomToken(16);
+    const url = new URL(`${serverUrl}/auth/openid`);
+    url.search = new URLSearchParams({
+      response_type: 'code',
+      redirect_uri: redirectUri,
+      code_challenge: await pkceChallenge(verifier),
+      code_challenge_method: 'S256',
+      state
+    }).toString();
+    let res: Raw & { location: string | null; cookie: string };
+    try {
+      // The redirect is the answer: its Location is the provider's sign-in page, and it carries the session cookie.
+      res = await timedFetch(url.toString(), { maxRedirections: 0 }, async (r) => ({
+        ...(await readRaw(r)),
+        location: r.headers.get('location'),
+        cookie: cookiesFrom(r.headers)
+      }));
+    } catch (err) {
+      throw unreachableError(err, serverUrl);
+    }
+    if (res.status === 400 && /redirect_uri/i.test(res.body)) continue;
+    if (res.status === 429) throw new ApiError(429, 'Too many sign-in attempts. Wait a few minutes and try again.');
+    let authorizeUrl: URL | null = null;
+    try {
+      authorizeUrl = res.status >= 300 && res.status < 400 && res.location ? new URL(res.location, serverUrl) : null;
+    } catch {
+      // Handled below.
+    }
+    // Only ever hand the browser a web page.
+    if (!authorizeUrl || !/^https?:$/.test(authorizeUrl.protocol)) {
+      throw new ApiError(res.status, `${serverUrl} couldn’t start single sign-on (${res.status}). Check that OpenID is set up on the server.`);
+    }
+    return { serverUrl, authorizeUrl: authorizeUrl.toString(), redirectUri, state, verifier, cookie: res.cookie };
+  }
+  throw new ApiError(
+    400,
+    `${serverUrl} doesn’t let desktop apps finish single sign-on. Ask your server admin to add lectern://oauth (or audiobookshelf://oauth) under Settings → Authentication → Allowed Mobile Redirect URIs.`
+  );
+}
+
+async function openIdSignIn(pending: OpenIdPending, link: string) {
+  const code = parseOpenIdCallback(pending, link);
+  const { serverUrl } = pending;
+  const url = new URL(`${serverUrl}/auth/openid/callback`);
+  url.search = new URLSearchParams({ code, state: pending.state, code_verifier: pending.verifier }).toString();
+  let raw: Raw;
+  try {
+    raw = await timedFetch(url.toString(), { headers: pending.cookie ? { Cookie: pending.cookie } : {}, timeout: LONG_TIMEOUT_MS }, readRaw);
+  } catch (err) {
+    throw unreachableError(err, serverUrl);
+  }
+  if (raw.status === 400 && /session/i.test(raw.body)) throw new ApiError(400, 'The sign-in took too long or the server restarted. Start again.');
+  if (raw.status === 401) {
+    throw new ApiError(401, 'The server didn’t accept that sign-in. If this is your first time, your server admin may need to create your account first.');
+  }
+  if (raw.status === 429) throw new ApiError(429, 'Too many sign-in attempts. Wait a few minutes and try again.');
+  if (raw.status < 200 || raw.status >= 300)
+    throw new ApiError(raw.status, `Single sign-on failed (${raw.status}${raw.body ? `: ${raw.body.slice(0, 120)}` : ''}).`);
+  let data: { user: User; userDefaultLibraryId?: string };
+  try {
+    data = JSON.parse(raw.body);
+  } catch {
+    throw new ApiError(0, `${serverUrl} didn't answer like an Audiobookshelf server.`);
+  }
+  const accessToken = data.user?.accessToken ?? data.user?.token;
+  if (!accessToken) throw new ApiError(0, 'The server didn’t return a token.');
+  const account: Omit<Account, 'id'> = {
+    serverUrl,
+    method: 'openid',
+    accessToken,
+    refreshToken: data.user.refreshToken ?? null,
+    username: data.user.username,
+    userId: data.user.id
+  };
+  return { data, account };
+}
+
+/** Finish a sign-on with the deep link the browser came back with, and make it the active account. */
+export async function completeOpenIdLogin(pending: OpenIdPending, link: string) {
+  const { data, account } = await openIdSignIn(pending, link);
+  await addAccount(account);
+  return data;
+}
+
+/** `reauthenticate` for accounts that sign in with single sign-on. */
+export async function reauthenticateWithOpenId(accountId: string, pending: OpenIdPending, link: string): Promise<Account> {
+  const account = vault.accounts.find((a) => a.id === accountId);
+  if (!account) throw new ApiError(0, 'That account is no longer saved.');
+  const { account: fresh } = await openIdSignIn(pending, link);
+  if (!sameUser(account, fresh)) {
+    throw new ApiError(
+      0,
+      `You signed in as ${fresh.username ?? 'a different user'}. Sign in as ${account.username ?? 'the same user'} to continue this account.`
+    );
+  }
+  return signedInAgain(accountId, fresh);
 }
 
 /** Sign the active account out and forget it. Returns the account that becomes active next, if any. */
@@ -726,7 +920,7 @@ export async function logout(): Promise<Account | null> {
   if (!current) return null;
   // Let the player close its session while the token still works.
   await runBeforeChange();
-  if (current.method === 'password' && current.refreshToken) {
+  if (usesRefreshToken(current.method) && current.refreshToken) {
     await timedFetch(
       `${current.serverUrl}/logout`,
       { method: 'POST', headers: { 'x-refresh-token': current.refreshToken }, timeout: 5000 },

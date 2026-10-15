@@ -1,6 +1,8 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
+import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 /** True inside the Tauri shell; false when the UI is opened in a plain browser tab via `vite dev`. */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -48,3 +50,18 @@ export const showMainWindow = () => call<void>('show_main_window');
 export const appWindow = (): Window | null => (inTauri ? getCurrentWindow() : null);
 /** Relabel the "Mini Player" items in the app and tray menus. */
 export const setMiniMenu = (mini: boolean) => call<void>('set_mini_menu', { mini });
+
+/** Open a web page in the default browser. */
+export async function openExternal(url: string) {
+  if (inTauri) await openUrl(url);
+  else window.open(url, '_blank', 'noopener');
+}
+
+/**
+ * Called with the URLs the OS hands the app (`lectern://…`, `audiobookshelf://…`), e.g. a sign-in coming back from the
+ * browser. On Windows and Linux they arrive through the single-instance plugin. A plain browser never receives any.
+ */
+export function onDeepLink(fn: (urls: string[]) => void): Promise<UnlistenFn> {
+  if (!inTauri) return Promise.resolve(() => {});
+  return onOpenUrl(fn);
+}

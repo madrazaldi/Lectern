@@ -15,6 +15,7 @@ import { dialogs } from './dialogs.svelte';
 import { itemMenuRequest, registerItemAction, type ItemTarget } from './itemActions';
 import { playOrToggle, toggleFinished, toggleQueued } from './play';
 import './actions/podcasts';
+import './actions/library';
 import './actions/reader';
 
 /** The episode a target plays: an explicit one, or a shelf's latest episode. Podcasts without one have nothing to play. */

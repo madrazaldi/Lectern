@@ -20,6 +20,7 @@
     "core:window:allow-center",
     "core:window:allow-close",
     "opener:default",
+    "deep-link:default",
     "window-state:default",
     {
       "identifier": "http:default",

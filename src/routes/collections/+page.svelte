@@ -7,6 +7,7 @@
   import ErrorState from '$lib/components/ErrorState.svelte';
   import Loading from '$lib/components/Loading.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { canEditCollections } from '$lib/util/actions/library';
   import { errorMessage, toast } from '$lib/stores/toast.svelte';
   import { plural } from '$lib/util/format';
   import { invalidate, resource } from '$lib/util/resource.svelte';
@@ -62,7 +63,11 @@
     <Loading label="Loading collections" />
   {:else if !collections.length && !playlists.length}
     <EmptyState title="No collections yet">
-      <p>Collections are hand-picked groups of books, made in the Audiobookshelf web app. Your playlists show up here too.</p>
+      {#if canEditCollections()}
+        <p>Collections are hand-picked groups of books. Start one from a book’s menu with Add to collection…. Your playlists show up here too.</p>
+      {:else}
+        <p>Collections are hand-picked groups of books, made by your server’s editors. Your playlists show up here too.</p>
+      {/if}
     </EmptyState>
   {:else}
     <div class="grid">

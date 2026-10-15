@@ -12,6 +12,17 @@ A desktop listening room for [Audiobookshelf](https://www.audiobookshelf.org). B
 - **Live sync** over Audiobookshelf's socket.io feed: progress from other devices and library changes appear as they happen.
 - Native integration: menu bar (tray) controls, a full macOS menu bar with shortcuts, closing the window keeps playback going (quit with ⌘Q), single instance, system Now Playing / media keys via the Media Session API.
 - Multiple accounts and servers; credentials live in the OS keychain.
+- Sign in with a username and password, an API key, or **single sign-on** (OpenID Connect) through your browser, on servers that use it.
+
+## Single sign-on (for server admins)
+
+Lectern signs in with OpenID the way the Audiobookshelf mobile apps do: your browser handles the identity provider, then
+sends the result back to Lectern through a link. It tries `audiobookshelf://oauth` first (allowed on every server by
+default), then `lectern://oauth`. If your server allows neither, Lectern says so; add one of them under
+**Settings → Authentication → Allowed Mobile Redirect URIs**. At the identity provider, your server's
+`/auth/openid/mobile-redirect` address must be an allowed redirect URI, as it is for the mobile apps.
+
+Single sign-on needs the desktop app (installed, not `tauri dev` on macOS), since only it can receive those links.
 
 ## Development
 
