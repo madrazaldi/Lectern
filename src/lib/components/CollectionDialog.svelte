@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { containKeys } from '$lib/util/confirm';
   import CollectionPicker from './CollectionPicker.svelte';
   import Modal from './Modal.svelte';
 
@@ -14,8 +15,7 @@
 
 <Modal label="Add {title} to a collection" width={320} {onclose}>
   {#snippet children({ close })}
-    <!-- Keys typed in here are the dialog's: the app's single-key shortcuts must not see them. -->
-    <div role="presentation" onkeydown={(e) => e.stopPropagation()}>
+    <div {@attach containKeys}>
       <p class="for">{title}</p>
       <CollectionPicker {libraryId} {itemIds} {close} />
     </div>

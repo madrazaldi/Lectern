@@ -15,6 +15,7 @@
   import { session } from '$lib/stores/session.svelte';
   import { errorMessage, toast } from '$lib/stores/toast.svelte';
   import { canDeleteCollections, canEditCollections } from '$lib/util/actions/library';
+  import { confirmDialog } from '$lib/util/confirm';
   import { plural, safeHtml } from '$lib/util/format';
   import { queueEntry } from '$lib/util/play';
   import { move, OrderSync } from '$lib/util/reorder';
@@ -33,7 +34,6 @@
   let draftName = $state('');
   let describing = $state(false);
   let draftDesc = $state('');
-  let confirmDelete = $state(false);
   /** A collection shows as covers; editing its books switches to rows. */
   let arranging = $state(false);
 
@@ -68,7 +68,6 @@
     void id;
     renaming = false;
     describing = false;
-    confirmDelete = false;
     arranging = false;
   });
 
@@ -161,10 +160,7 @@
   async function removeFromPlaylist(index: number) {
     if (!playlist) return;
     // Removing the last entry deletes the playlist on the server, so that one asks first instead.
-    if (playlist.items.length === 1) {
-      confirmDelete = true;
-      return;
-    }
+    if (playlist.items.length === 1) return deleteIt();
     const pid = playlist.id;
     const order = playlist.items.map(entryOf);
     const entry = order[index];
@@ -223,6 +219,16 @@
   async function deleteIt() {
     const target = playlist ?? collection;
     if (!target) return;
+    const sure = await confirmDialog({
+      title: `Delete ${name}?`,
+      message:
+        playlist && playlist.items.length === 1
+          ? `It's the last title in this playlist, and a playlist can't be empty. The title stays in your library.`
+          : `The ${noun} goes for everyone who can see it. The titles stay in your library.`,
+      confirmLabel: `Delete ${noun}`,
+      danger: true
+    });
+    if (!sure) return;
     try {
       await (playlist ? abs.deletePlaylist(target.id) : abs.deleteCollection(target.id));
       invalidate('collections:');
@@ -312,13 +318,7 @@
         {/if}
         {#if deletable}
           <div class="spacer"></div>
-          {#if confirmDelete}
-            <span class="faint">Delete this {noun}? The titles stay in your library.</span>
-            <button class="btn btn-quiet" onclick={() => (confirmDelete = false)}>Keep</button>
-            <button class="btn btn-danger" onclick={deleteIt}>Delete</button>
-          {:else}
-            <button class="btn btn-quiet" onclick={() => (confirmDelete = true)}><Trash2 size={16} /> Delete {noun}</button>
-          {/if}
+          <button class="btn btn-quiet" onclick={deleteIt}><Trash2 size={16} /> Delete {noun}</button>
         {/if}
       </div>
     </header>

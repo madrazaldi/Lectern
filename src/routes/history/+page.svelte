@@ -18,6 +18,7 @@
   import { session } from '$lib/stores/session.svelte';
   import { errorMessage, toast } from '$lib/stores/toast.svelte';
   import { canDeleteSessions } from '$lib/util/actions/library';
+  import { confirmDialog } from '$lib/util/confirm';
   import { nearEnd } from '$lib/util/dom';
   import { clock, plural } from '$lib/util/format';
   import { dayLabel, deviceLabel, groupByDay, listened } from '$lib/util/history';
@@ -59,7 +60,6 @@
     return peek<LibraryItem>(`item:${itemId}`)?.media.metadata.title ?? null;
   });
 
-  let confirming = $state<string | null>(null);
   let deleting = $state<string | null>(null);
 
   function times(s: HistorySession) {
@@ -78,6 +78,13 @@
   }
 
   async function remove(s: HistorySession) {
+    const sure = await confirmDialog({
+      title: 'Delete this session?',
+      message: `${listened(s.timeListening)} of ${s.displayTitle} on ${dayLabel(new Date(s.startedAt || s.updatedAt)).toLowerCase()} stops counting in your listening stats. Your place in the title doesn't change.`,
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!sure) return;
     deleting = s.id;
     try {
       await abs.deleteListeningSession(s.id);
@@ -89,7 +96,6 @@
       toast(`Couldn't delete the session. ${errorMessage(err)}`, { tone: 'error' });
     } finally {
       deleting = null;
-      confirming = null;
     }
   }
 </script>
@@ -151,20 +157,15 @@
               <span class="device faint" title={deviceLabel(s.deviceInfo, s.mediaPlayer)}>{deviceLabel(s.deviceInfo, s.mediaPlayer)}</span>
               {#if canDelete}
                 <div class="del">
-                  {#if confirming === s.id}
-                    <span class="faint">Delete? It stops counting in your stats.</span>
-                    <button class="btn btn-quiet" onclick={() => (confirming = null)}>Keep</button>
-                    <button class="btn btn-danger" onclick={() => remove(s)} disabled={deleting === s.id}>Delete</button>
-                  {:else}
-                    <button
-                      class="icon-btn"
-                      aria-label="Delete this session of {s.displayTitle}"
-                      title="Delete from history"
-                      onclick={() => (confirming = s.id)}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  {/if}
+                  <button
+                    class="icon-btn"
+                    aria-label="Delete this session of {s.displayTitle}"
+                    title="Delete from history"
+                    onclick={() => remove(s)}
+                    disabled={deleting === s.id}
+                  >
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               {/if}
             </li>
@@ -293,9 +294,7 @@
   }
   .del {
     display: flex;
-    align-items: center;
     justify-content: flex-end;
-    gap: 8px;
     min-width: 32px;
   }
   .sentinel {

@@ -23,7 +23,8 @@ export function openCollectionPicker(target: { libraryId: string; itemIds: strin
       ...target,
       onclose: () => {
         if (open === dialog) open = null;
-        void unmount(dialog);
+        // Not from inside its own close handler.
+        setTimeout(() => void unmount(dialog));
       }
     }
   });

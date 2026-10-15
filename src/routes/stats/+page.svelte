@@ -407,7 +407,7 @@
           <div><span class="v num">{duration(lib.totalDuration, { short: true })}</span><span class="l">to listen to</span></div>
           <div><span class="v num">{bytes(lib.totalSize)}</span><span class="l">in {plural(lib.numAudioTracks, 'audio file')}</span></div>
         </div>
-        <div class="two">
+        <div class="two ranks">
           {#if lib.authorsWithCount}
             <div>
               <h3>Most titles by</h3>
@@ -464,6 +464,10 @@
     font-weight: 650;
     color: var(--text-2);
     margin: 28px 0 12px;
+  }
+  /* The headings' own top margin separates the rows. */
+  .two.ranks {
+    row-gap: 8px;
   }
   .totals.small {
     margin-top: 0;
