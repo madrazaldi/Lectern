@@ -1,9 +1,5 @@
 use std::{
-    collections::HashSet,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -12,7 +8,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub struct AppState {
     pub hide_on_close: AtomicBool,
     pub quitting: AtomicBool,
-    pub cancels: Mutex<HashSet<String>>,
 }
 
 impl Default for AppState {
@@ -20,7 +15,6 @@ impl Default for AppState {
         Self {
             hide_on_close: AtomicBool::new(true),
             quitting: AtomicBool::new(false),
-            cancels: Mutex::new(HashSet::new()),
         }
     }
 }

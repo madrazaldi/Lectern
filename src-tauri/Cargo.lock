@@ -2094,6 +2094,7 @@ name = "lectern"
 version = "0.1.0"
 dependencies = [
  "keyring",
+ "libc",
  "serde",
  "serde_json",
  "tauri",
@@ -2103,6 +2104,8 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
  "tokio",
+ "tokio-util",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
