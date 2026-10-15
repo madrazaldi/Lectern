@@ -1,6 +1,6 @@
 <script lang="ts">
   import { KeyRound, LoaderCircle, UserRound } from '@lucide/svelte';
-  import { loginWithApiKey, loginWithPassword, normalizeServerUrl, probeServer } from '$lib/api/client';
+  import { loginWithApiKey, loginWithPassword, normalizeServerUrl, resolveServer } from '$lib/api/client';
   import { session } from '$lib/stores/session.svelte';
   import { friendlyLoginError } from '$lib/util/errors';
   import { roving } from '$lib/util/roving';
@@ -32,7 +32,7 @@
     let url: string | undefined;
     try {
       url = normalizeServerUrl(server);
-      await probeServer(url);
+      url = (await resolveServer(server)).url;
       if (method === 'password') await loginWithPassword(url, username.trim(), password);
       else await loginWithApiKey(url, apiKey);
       localStorage.setItem(LAST_SERVER, url);

@@ -18,7 +18,11 @@
     <div class="menu">
       {#if active}
         <p class="status">
-          {player.sleep.kind === 'chapter' ? 'Pausing at the end of this chapter' : 'Pausing in'}
+          {player.sleep.kind === 'chapter'
+            ? 'Pausing at the end of this chapter'
+            : player.sleep.kind === 'book'
+              ? 'Pausing at the end of this title'
+              : 'Pausing in'}
           <span class="num">{clock(player.sleepRemaining)}</span>
         </p>
       {/if}
@@ -41,6 +45,15 @@
             player.sleepAtChapterEnd();
             close();
           }}>End of chapter</button
+        >
+        <button
+          class="opt wide"
+          class:on={player.sleep.kind === 'book'}
+          disabled={!player.ready}
+          onclick={() => {
+            player.sleepAtBookEnd();
+            close();
+          }}>End of title</button
         >
       </div>
       {#if active}
@@ -95,7 +108,7 @@
     color: var(--text-2);
   }
   .opt.wide {
-    grid-column: span 4;
+    grid-column: span 2;
   }
   .opt:hover:not(:disabled) {
     background: var(--rule-soft);

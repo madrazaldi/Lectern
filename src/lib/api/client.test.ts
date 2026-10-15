@@ -424,3 +424,28 @@ describe('account changes', () => {
     expect(client.listAccounts()).toHaveLength(1);
   });
 });
+
+describe('resolveServer', () => {
+  const status = { app: 'audiobookshelf', serverVersion: '2.37.1', isInit: true, authMethods: ['local'] };
+
+  it('falls back to plain HTTP when no scheme was typed and HTTPS has nobody answering', async () => {
+    route((url) => {
+      if (url.protocol === 'https:') throw new TypeError('connection refused');
+      return json(status);
+    });
+    expect((await client.resolveServer('192.168.1.20:13378')).url).toBe('http://192.168.1.20:13378');
+  });
+
+  it('prefers HTTPS when it answers', async () => {
+    route(() => json(status));
+    expect((await client.resolveServer('abs.example.com/')).url).toBe('https://abs.example.com');
+  });
+
+  it('keeps an explicit scheme', async () => {
+    route(() => {
+      throw new TypeError('connection refused');
+    });
+    await expect(client.resolveServer('https://abs.example.com')).rejects.toThrow();
+    expect(http.calls).toEqual(['GET /status']);
+  });
+});

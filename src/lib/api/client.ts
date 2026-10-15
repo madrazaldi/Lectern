@@ -613,6 +613,23 @@ export async function probeServer(serverUrl: string): Promise<ServerStatus> {
   return data;
 }
 
+/**
+ * Find the server behind what the user typed. Without a scheme, try HTTPS first and fall back to plain HTTP, since most
+ * servers on a home network (e.g. `192.168.1.20:13378`) only speak HTTP.
+ */
+export async function resolveServer(input: string): Promise<{ url: string; status: ServerStatus }> {
+  const url = normalizeServerUrl(input);
+  try {
+    return { url, status: await probeServer(url) };
+  } catch (err) {
+    if (/^https?:\/\//i.test(input.trim())) throw err;
+    const plain = url.replace(/^https:/i, 'http:');
+    const status = await probeServer(plain).catch(() => null);
+    if (status) return { url: plain, status };
+    throw err;
+  }
+}
+
 async function passwordSignIn(serverUrl: string, username: string, password: string) {
   let raw: Raw;
   try {
