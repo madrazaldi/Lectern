@@ -81,7 +81,11 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 export function tintFor(url: string): Promise<Tint | null> {
   let p = cache.get(url);
   if (!p) {
-    p = extract(url).catch(() => null);
+    // A cover with no usable colour is remembered; a failed fetch (offline, server busy) is tried again next time.
+    p = extract(url).catch(() => {
+      cache.delete(url);
+      return null;
+    });
     cache.set(url, p);
   }
   return p;
