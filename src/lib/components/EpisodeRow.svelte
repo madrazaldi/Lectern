@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { CircleCheck, ListEnd, ListX, Pause, Play } from '@lucide/svelte';
+  import { CircleCheck, ListEnd, ListX, Pause, Play, RotateCcw } from '@lucide/svelte';
   import type { LibraryItem, PodcastEpisode } from '$lib/api/types';
   import { player } from '$lib/stores/player.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { resetProgress } from '$lib/util/actions/podcasts';
   import { date, duration } from '$lib/util/format';
   import { itemMenuFor } from '$lib/util/itemMenu';
   import { playOrToggle, toggleFinished, toggleQueued } from '$lib/util/play';
@@ -34,7 +35,20 @@
     <span class="ep-date faint">{when}</span>
     <span class="ep-title">{ep.title}</span>
     {#if summary}<span class="ep-desc">{summary}</span>{/if}
-    {#if p && !p.isFinished && p.progress > 0}<div class="ep-prog"><Progress value={p.progress} label="{ep.title}: listened" /></div>{/if}
+    {#if p && !p.isFinished && p.progress > 0}
+      <div class="ep-prog">
+        <Progress value={p.progress} label="{ep.title}: listened" />
+        {#if !on}
+          <button
+            class="reset"
+            onclick={() => resetProgress(podcast.id, ep.id, ep.title)}
+            disabled={!session.online}
+            aria-label="Reset progress on {ep.title}"
+            title="Reset progress"><RotateCcw size={13} /></button
+          >
+        {/if}
+      </div>
+    {/if}
   </div>
   <div class="ep-side">
     <span class="faint num">{ep.duration ? duration(ep.duration, { short: true }) : ''}</span>
@@ -109,8 +123,23 @@
     overflow: hidden;
   }
   .ep-prog {
+    display: grid;
+    grid-template-columns: minmax(0, 240px) auto;
+    align-items: center;
+    gap: 8px;
     margin-top: 6px;
-    max-width: 240px;
+  }
+  .reset {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    color: var(--text-3);
+  }
+  .reset:hover:not(:disabled) {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
   }
   .ep-side {
     display: flex;
