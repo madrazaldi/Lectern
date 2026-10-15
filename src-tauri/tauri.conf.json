@@ -32,11 +32,11 @@
       "csp": {
         "default-src": "'self'",
         "script-src": "'self'",
-        "style-src": "'self' 'unsafe-inline'",
+        "style-src": "'self' 'unsafe-inline' blob:",
         "img-src": "'self' asset: http://asset.localhost data: blob: http: https:",
         "media-src": "'self' asset: http://asset.localhost blob: http: https:",
         "connect-src": "'self' ipc: http://ipc.localhost http: https: ws: wss:",
-        "font-src": "'self' data:"
+        "font-src": "'self' data: blob:"
       },
       "assetProtocol": {
         "enable": true,

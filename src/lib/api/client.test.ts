@@ -655,3 +655,31 @@ describe('single sign-on', () => {
     expect(http.calls).toEqual(['POST /logout']);
   });
 });
+
+describe('binary responses', () => {
+  it('returns the body as bytes, sending the token as a header and renewing it on a 401', async () => {
+    await signIn();
+    let refreshed = false;
+    route((url, init) => {
+      if (url.pathname === '/auth/refresh') {
+        refreshed = true;
+        return json({ user: { id: 'u1', accessToken: jwt('a2'), refreshToken: jwt('r2') } });
+      }
+      const auth = new Headers(init.headers).get('authorization') ?? '';
+      if (!refreshed) return new Response('Unauthorized', { status: 401 });
+      expect(url.searchParams.has('token')).toBe(false);
+      expect(auth).toMatch(/^Bearer /);
+      return new Response(new Uint8Array([0x50, 0x4b, 3, 4]), { headers: { 'content-type': 'application/epub+zip' } });
+    });
+    const bytes = await client.request<ArrayBuffer>('/api/items/i1/ebook', { bytes: true });
+    expect(Array.from(new Uint8Array(bytes))).toEqual([0x50, 0x4b, 3, 4]);
+  });
+
+  it('still reports errors as text', async () => {
+    await signIn();
+    route(() => new Response('No ebook', { status: 404 }));
+    const err = caught(await client.request('/api/items/i1/ebook', { bytes: true }).catch((e) => e));
+    expect(err.status).toBe(404);
+    expect(err.message).toBe('No ebook');
+  });
+});
