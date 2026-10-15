@@ -263,3 +263,44 @@ export const batchUpdateProgress = (updates: ProgressUpdate[]) =>
 
 /** Forget a title's progress entirely (by the progress record's own id). */
 export const deleteProgress = (progressId: string) => request<void>(`/api/me/progress/${progressId}`, { method: 'DELETE' });
+
+// --- library ---
+
+// Kept with this block (rather than in the list at the top) so parallel workstreams don't collide there.
+import type { LibraryStats, SessionPage, YearStats } from './types';
+
+/** Newest first. `itemId` narrows it to one title (an episode needs `episodeId` too). */
+export const getListeningSessions = (q: { itemId?: string | null; episodeId?: string | null; page: number; itemsPerPage: number }, signal?: AbortSignal) =>
+  request<SessionPage>(q.itemId ? `/api/me/item/listening-sessions/${q.itemId}${q.episodeId ? `/${q.episodeId}` : ''}` : '/api/me/listening-sessions', {
+    signal,
+    timeout: LONG,
+    query: { page: q.page, itemsPerPage: q.itemsPerPage }
+  });
+
+/** Needs the delete permission (the server doesn't otherwise check whose session it is). */
+export const deleteListeningSession = (id: string) => request<void>(`/api/sessions/${id}`, { method: 'DELETE' });
+
+export const getLibraryStats = (libraryId: string, signal?: AbortSignal) =>
+  request<LibraryStats>(`/api/libraries/${libraryId}/stats`, { signal, timeout: LONG });
+
+export const getYearStats = (year: number, signal?: AbortSignal) => request<YearStats>(`/api/me/stats/year/${year}`, { signal, timeout: LONG });
+
+/** The server won't create an empty collection: `books` (library item ids) needs at least one. */
+export const createCollection = (libraryId: string, name: string, books: string[], description?: string | null) =>
+  request<Collection>('/api/collections', { method: 'POST', body: { libraryId, name, description: description || undefined, books } });
+
+/** `books` (library item ids, in the new order) only reorders; it doesn't add or remove. */
+export const updateCollection = (id: string, patch: { name?: string; description?: string | null; books?: string[] }) =>
+  request<Collection>(`/api/collections/${id}`, { method: 'PATCH', body: patch });
+
+export const deleteCollection = (id: string) => request<void>(`/api/collections/${id}`, { method: 'DELETE' });
+
+export const addToCollection = (id: string, itemIds: string[]) =>
+  itemIds.length === 1
+    ? request<Collection>(`/api/collections/${id}/book`, { method: 'POST', body: { id: itemIds[0] } })
+    : request<Collection>(`/api/collections/${id}/batch/add`, { method: 'POST', body: { books: itemIds } });
+
+export const removeFromCollection = (id: string, itemIds: string[]) =>
+  itemIds.length === 1
+    ? request<Collection>(`/api/collections/${id}/book/${itemIds[0]}`, { method: 'DELETE' })
+    : request<Collection>(`/api/collections/${id}/batch/remove`, { method: 'POST', body: { books: itemIds } });

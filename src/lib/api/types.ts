@@ -441,3 +441,73 @@ export type RecentEpisode = ServerEpisode & {
   podcast: PodcastMedia & { libraryItemId: string };
   libraryId: string;
 };
+
+// --- library ---
+
+/** The device a listening session was recorded on, as the client described itself. */
+export interface SessionDevice {
+  clientName?: string;
+  clientVersion?: string;
+  deviceName?: string;
+  manufacturer?: string;
+  model?: string;
+  osName?: string;
+  osVersion?: string;
+  browserName?: string;
+}
+
+/** One entry of the listening history (`/api/me/listening-sessions`). */
+export interface HistorySession extends ListeningSession {
+  libraryId: string;
+  mediaMetadata: { title?: string; authors?: AuthorRef[] } | null;
+  coverPath: string | null;
+  duration: number;
+  /** Positions, in seconds, where listening started and where it stopped. */
+  startTime: number;
+  currentTime: number;
+  deviceInfo: SessionDevice | null;
+  mediaPlayer: string | null;
+}
+
+export interface SessionPage {
+  total: number;
+  numPages: number;
+  page: number;
+  itemsPerPage: number;
+  sessions: HistorySession[];
+}
+
+export interface LibraryStats {
+  totalItems: number;
+  /** Book libraries only. */
+  totalAuthors?: number;
+  authorsWithCount?: { id: string; name: string; count: number }[];
+  totalGenres: number;
+  genresWithCount: { genre: string; count: number }[];
+  /** Seconds. */
+  totalDuration: number;
+  /** Bytes. */
+  totalSize: number;
+  numAudioTracks: number;
+  longestItems: { id: string; title: string; duration: number }[];
+  largestItems: { id: string; title: string; size: number }[];
+}
+
+/** A year of the current user's listening (`/api/me/stats/year/:year`). Times are seconds. */
+export interface YearStats {
+  totalListeningSessions: number;
+  totalListeningTime: number;
+  totalBookListeningTime: number;
+  totalPodcastListeningTime: number;
+  topAuthors: { name: string; time: number }[] | null;
+  topGenres: { genre: string; time: number }[] | null;
+  mostListenedNarrator: { name: string; time: number } | null;
+  /** `month` is 0-based. */
+  mostListenedMonth: { month: number; time: number } | null;
+  numBooksFinished: number;
+  numBooksListened: number;
+  longestAudiobookFinished: { id: string; title: string; duration: number; finishedAt: number } | null;
+  /** Library item ids. */
+  booksWithCovers: string[];
+  finishedBooksWithCovers: string[];
+}
