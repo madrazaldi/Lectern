@@ -269,6 +269,11 @@ class Session {
     }
   }
 
+  /** Drop a title's progress locally, after the server deleted it (Reset progress). */
+  forgetProgress(itemId: string, episodeId: string | null = null) {
+    delete this.progress[keyFor(itemId, episodeId)];
+  }
+
   bookmarksFor(itemId: string) {
     return this.bookmarks.filter((b) => b.libraryItemId === itemId).sort((a, b) => a.time - b.time);
   }

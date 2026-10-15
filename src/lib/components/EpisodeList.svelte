@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Search, X } from '@lucide/svelte';
-  import type { LibraryItem, PodcastMedia } from '$lib/api/types';
+  import { CircleCheckBig, Search, X } from '@lucide/svelte';
+  import type { LibraryItem, PodcastMedia, ServerEpisode } from '$lib/api/types';
   import { session } from '$lib/stores/session.svelte';
+  import { markAllPlayed } from '$lib/util/actions/podcasts';
   import { nearEnd } from '$lib/util/dom';
   import { plural } from '$lib/util/format';
   import EpisodeRow from './EpisodeRow.svelte';
@@ -13,7 +14,9 @@
   let { podcast }: { podcast: LibraryItem & { media: PodcastMedia } } = $props();
 
   const PAGE = 40;
-  type Filter = 'all' | 'unplayed' | 'in-progress' | 'finished';
+  type Filter = 'all' | 'new' | 'unplayed' | 'in-progress' | 'finished';
+  /** Unplayed episodes that came out, or reached the server, this recently count as new. */
+  const NEW_FOR_MS = 7 * 86_400_000;
   type Sort = 'newest' | 'oldest' | 'title';
 
   let query = $state('');
@@ -39,12 +42,15 @@
 
   const matches = $derived.by(() => {
     const q = query.trim().toLocaleLowerCase();
+    const recent = Date.now() - NEW_FOR_MS;
     const list = indexed.filter(({ ep, text }) => {
       if (q && !text.includes(q)) return false;
       if (filter === 'all') return true;
       const p = session.progressFor(podcast.id, ep.id);
       if (filter === 'finished') return !!p?.isFinished;
-      if (filter === 'unplayed') return !p || (!p.isFinished && !p.currentTime);
+      const unplayed = !p || (!p.isFinished && !p.currentTime);
+      if (filter === 'unplayed') return unplayed;
+      if (filter === 'new') return unplayed && Math.max((ep as ServerEpisode).addedAt ?? 0, ep.publishedAt ?? 0) >= recent;
       return !!p && !p.isFinished && p.currentTime > 0;
     });
     if (sort === 'title') return list.toSorted((a, b) => a.ep.title.localeCompare(b.ep.title, undefined, { numeric: true }));
@@ -60,6 +66,8 @@
   });
 
   const total = $derived(podcast.media.episodes?.length ?? 0);
+  // "Mark all" acts on what the search and filter show.
+  const unfinished = $derived(matches.filter(({ ep }) => !session.progressFor(podcast.id, ep.id)?.isFinished).map(({ ep }) => ep));
 </script>
 
 <section class="episodes" aria-labelledby="episodes-h">
@@ -88,6 +96,7 @@
       {/if}
       <select class="select" bind:value={filter} aria-label="Show episodes">
         <option value="all">All episodes</option>
+        <option value="new">New</option>
         <option value="unplayed">Unplayed</option>
         <option value="in-progress">In progress</option>
         <option value="finished">Played</option>
@@ -99,9 +108,17 @@
       </select>
     </div>
   </div>
-  <p class="count faint num" aria-live="polite">
-    {#if query || filter !== 'all'}{plural(matches.length, 'episode')} of {total.toLocaleString()}{:else}{plural(total, 'episode')}{/if}
-  </p>
+  <div class="sub">
+    <p class="count faint num" aria-live="polite">
+      {#if query || filter !== 'all'}{plural(matches.length, 'episode')} of {total.toLocaleString()}{:else}{plural(total, 'episode')}{/if}
+    </p>
+    {#if unfinished.length > 1}
+      <button class="mark" onclick={() => markAllPlayed(podcast, unfinished)}>
+        <CircleCheckBig size={14} />
+        {query || filter !== 'all' ? `Mark these ${unfinished.length.toLocaleString()} as played` : 'Mark all as played'}
+      </button>
+    {/if}
+  </div>
 
   <ol class="list">
     {#each shown as { ep, summary } (ep.id)}
@@ -142,9 +159,25 @@
     font-size: var(--t-lg);
     font-weight: 620;
   }
-  .count {
+  .sub {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
     margin-top: 4px;
+  }
+  .count {
     font-size: var(--t-sm);
+  }
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--t-sm);
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .mark:hover {
+    color: var(--accent);
   }
   .find {
     display: flex;
