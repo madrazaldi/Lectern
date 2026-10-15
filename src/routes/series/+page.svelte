@@ -1,21 +1,26 @@
+<script module lang="ts">
+  import type { Series } from '$lib/api/types';
+  import { pagedCache } from '$lib/util/paged.svelte';
+
+  const lists = pagedCache<Series>();
+  let lastSort = 'name';
+</script>
+
 <script lang="ts">
   import { untrack } from 'svelte';
   import * as abs from '$lib/api/abs';
-  import type { Series } from '$lib/api/types';
   import CardSkeleton from '$lib/components/CardSkeleton.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
   import SeriesCard from '$lib/components/SeriesCard.svelte';
+  import VirtualGrid from '$lib/components/VirtualGrid.svelte';
   import { session } from '$lib/stores/session.svelte';
+  import { PagedList } from '$lib/util/paged.svelte';
+  import { pageTitle } from '$lib/util/title';
 
   const library = session.library!;
-  let list = $state<Series[]>([]);
-  let total = $state<number | null>(null);
-  let loading = $state(false);
-  let error = $state<string | null>(null);
-  let sort = $state('name');
-  let nextPage = 0;
-  let generation = 0;
-  let sentinel = $state<HTMLDivElement>();
+  // Remembered for the session so Back returns to the same order (and the same loaded pages).
+  let sort = $state(lastSort);
 
   const sorts = [
     { value: 'name', label: 'Name' },
@@ -25,61 +30,45 @@
     { value: 'totalDuration', label: 'Total length' }
   ];
 
-  async function loadMore() {
-    if (loading || (total !== null && list.length >= total)) return;
-    const gen = generation;
-    loading = true;
-    try {
-      const res = await abs.getSeriesList(library.id, nextPage, sort, sort !== 'name');
-      if (gen !== generation) return;
-      list = [...list, ...res.results];
-      total = res.total;
-      nextPage++;
-    } catch (err) {
-      if (gen === generation) error = (err as Error).message;
-    } finally {
-      if (gen === generation) loading = false;
-    }
-  }
-
-  $effect(() => {
-    void sort;
-    generation++;
-    list = [];
-    total = null;
-    nextPage = 0;
-    loading = false;
-    untrack(() => void loadMore());
+  const list = new PagedList<{ library: string; sort: string }, Series>({
+    cache: lists,
+    key: (s) => s.id,
+    fetch: (q, n) => abs.getSeriesList(q.library, n, q.sort, q.sort !== 'name')
   });
-
-  $effect(() => {
-    if (!sentinel) return;
-    const io = new IntersectionObserver((e) => e[0].isIntersecting && void loadMore(), { rootMargin: '800px' });
-    io.observe(sentinel);
-    return () => io.disconnect();
+  list.set({ library: library.id, sort: untrack(() => sort) });
+  $effect.pre(() => {
+    const q = { library: library.id, sort };
+    lastSort = sort;
+    untrack(() => list.set(q));
   });
+  $effect(() => () => list.dispose());
 </script>
+
+<svelte:head><title>{pageTitle('Series')}</title></svelte:head>
 
 <div class="page">
   <header class="head">
     <h1 class="page-title">Series</h1>
-    {#if total !== null}<span class="faint num">{total.toLocaleString()}</span>{/if}
+    {#if list.total !== null}<span class="faint num">{list.total.toLocaleString()}</span>{/if}
     <div class="spacer"></div>
     <select class="select" bind:value={sort} aria-label="Sort series by">
       {#each sorts as s (s.value)}<option value={s.value}>{s.label}</option>{/each}
     </select>
   </header>
 
-  {#if error}
-    <EmptyState title="Couldn't load series"><p>{error}</p></EmptyState>
-  {:else if total === 0}
+  {#if list.error && !list.items.length}
+    <ErrorState title="Couldn't load series" message={list.error} cause={list.cause} onretry={() => list.loadMore()} />
+  {:else if list.total === 0}
     <EmptyState title="No series yet"><p>Books that share series metadata are grouped here.</p></EmptyState>
   {:else}
-    <div class="grid">
-      {#each list as s (s.id)}<SeriesCard series={s} />{/each}
-    </div>
-    {#if loading}<div class="more"><CardSkeleton count={6} width={176} /></div>{/if}
-    <div bind:this={sentinel} style:height="1px"></div>
+    {#if !list.items.length}<CardSkeleton count={12} width={176} label="Loading series" />{/if}
+    <VirtualGrid items={list.items} key={(s) => s.id} minColumnWidth={176} columnGap={26} rowGap={34} estimateRowHeight={300} onnearend={() => list.loadMore()}>
+      {#snippet item(s)}<SeriesCard series={s} />{/snippet}
+    </VirtualGrid>
+    {#if list.loading && list.items.length}<div class="more"><CardSkeleton count={6} width={176} label="Loading more series" /></div>{/if}
+    {#if list.error && list.items.length}
+      <p class="more-error" role="alert">Couldn't load more series. <button class="link" onclick={() => list.loadMore()}>Try again</button></p>
+    {/if}
   {/if}
 </div>
 
@@ -93,12 +82,17 @@
   .spacer {
     flex: 1;
   }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-    gap: 34px 26px;
-  }
   .more {
     margin-top: 30px;
+  }
+  .more-error {
+    margin-top: 24px;
+    text-align: center;
+    font-size: var(--t-sm);
+    color: var(--text-2);
+  }
+  .link {
+    color: var(--accent);
+    font-weight: 650;
   }
 </style>

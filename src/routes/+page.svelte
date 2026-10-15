@@ -1,15 +1,15 @@
 <script lang="ts">
   import { Info, Pause, Play } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import * as abs from '$lib/api/abs';
   import { coverUrl } from '$lib/api/client';
-  import type { Author, LibraryItem, Series, Shelf as ShelfData } from '$lib/api/types';
+  import type { Author, LibraryItem, Series } from '$lib/api/types';
   import { isBook } from '$lib/api/types';
   import AuthorCard from '$lib/components/AuthorCard.svelte';
   import CardSkeleton from '$lib/components/CardSkeleton.svelte';
   import ChapterShelf from '$lib/components/ChapterShelf.svelte';
   import Cover from '$lib/components/Cover.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
   import SeriesCard from '$lib/components/SeriesCard.svelte';
   import Shelf from '$lib/components/Shelf.svelte';
@@ -17,29 +17,37 @@
   import { session } from '$lib/stores/session.svelte';
   import { tintFor, type Tint } from '$lib/util/color';
   import { duration } from '$lib/util/format';
-
-  let shelves = $state<ShelfData[] | null>(null);
-  let error = $state<string | null>(null);
-  let hero = $state<LibraryItem | null>(null);
-  let heroTint = $state<Tint | null>(null);
+  import { playFrom, playOrToggle } from '$lib/util/play';
+  import { resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
   const library = session.library;
 
-  onMount(() => {
-    if (!library) return;
-    abs
-      .getPersonalized(library.id)
-      .then(async (s) => {
-        const candidate =
-          (player.item?.libraryId === library.id && !player.episode ? player.item : null) ??
-          (s.find((x) => x.id === 'continue-listening')?.entities[0] as LibraryItem | undefined);
-        // Resolve the hero before showing anything, so the page doesn't jump when it arrives.
-        const full = candidate?.mediaType === 'book' ? await abs.getItem(candidate.id).catch(() => null) : null;
-        hero = full;
-        shelves = s;
-        if (full) heroTint = await tintFor(coverUrl(full.id, 96, full.updatedAt));
-      })
-      .catch((err) => (error = err.message));
+  const res = resource(() => library?.id, {
+    id: (k) => `home:${k}`,
+    load: async (libraryId) => {
+      const shelves = await abs.getPersonalized(libraryId);
+      const candidate =
+        (player.item?.libraryId === libraryId && !player.episode ? player.item : null) ??
+        (shelves.find((x) => x.id === 'continue-listening')?.entities[0] as LibraryItem | undefined);
+      // Resolve the hero before showing anything, so the page doesn't jump when it arrives.
+      const hero = candidate?.mediaType === 'book' ? await abs.getItem(candidate.id).catch(() => null) : null;
+      return { shelves, hero };
+    }
+  });
+
+  const shelves = $derived(res.data?.shelves ?? null);
+  const hero = $derived(res.data?.hero ?? null);
+
+  let heroTint = $state<Tint | null>(null);
+  $effect(() => {
+    const h = hero;
+    if (!h) return;
+    let current = true;
+    void tintFor(coverUrl(h.id, 96, h.updatedAt)).then((t) => {
+      if (current) heroTint = t;
+    });
+    return () => (current = false);
   });
 
   const heroIsPlaying = $derived(!!hero && player.isCurrent(hero.id));
@@ -56,24 +64,14 @@
   });
   const heroLeft = $derived(Math.max(0, heroDuration - heroTime) / (hero ? player.rateFor(hero.id) : 1));
 
-  function heroPlay() {
-    if (!hero) return;
-    if (heroIsPlaying) player.toggle();
-    else void player.play(hero.id);
-  }
-
-  function heroSeek(t: number) {
-    if (!hero) return;
-    if (heroIsPlaying && player.ready) void player.seek(t);
-    else void player.play(hero.id, null, t);
-  }
-
   const visibleShelves = $derived(
     (shelves ?? [])
       .map((s) => (s.id === 'continue-listening' && hero ? { ...s, entities: s.entities.filter((e) => e.id !== hero!.id) } : s))
       .filter((s) => s.entities.length)
   );
 </script>
+
+<svelte:head><title>{pageTitle('Home')}</title></svelte:head>
 
 <div class="page">
   {#if hero && isBook(hero)}
@@ -103,12 +101,12 @@
             chapters={heroChapters.length ? heroChapters : [{ id: 0, start: 0, end: heroDuration, title: hero.media.metadata.title }]}
             time={heroTime}
             duration={heroDuration}
-            onseek={heroSeek}
+            onseek={(t) => playFrom(hero.id, t)}
           />
         </div>
 
         <div class="hero-actions">
-          <button class="btn btn-primary btn-lg" onclick={heroPlay}>
+          <button class="btn btn-primary btn-lg" onclick={() => playOrToggle(hero.id)}>
             {#if heroIsPlaying && player.isPlaying}
               <Pause size={18} fill="currentColor" strokeWidth={0} /> Pause
             {:else}
@@ -127,13 +125,10 @@
     </section>
   {/if}
 
-  {#if error}
-    <EmptyState title="Couldn't load your shelves">
-      <p>{error}</p>
-      <button class="btn btn-primary" onclick={() => location.reload()}>Reload</button>
-    </EmptyState>
+  {#if res.error}
+    <ErrorState title="Couldn't load your shelves" message={res.error} cause={res.cause} onretry={() => res.refresh()} />
   {:else if !shelves}
-    <div class="loading"><CardSkeleton /></div>
+    <div class="loading"><CardSkeleton label="Loading your shelves" /></div>
   {:else if !visibleShelves.length && !hero}
     <EmptyState title="This library is empty">
       <p>Add audiobooks to the library folder on your server and run a scan. They'll show up here.</p>

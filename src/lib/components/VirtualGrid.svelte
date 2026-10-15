@@ -1,6 +1,7 @@
 <script lang="ts" generics="T">
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
+  import { scrollParent } from '$lib/util/dom';
   import { columnCount, nearEnd, rowCount, spacers, totalHeight, visibleRange } from '$lib/util/virtual';
 
   interface Props {
@@ -41,14 +42,6 @@
   // Rows are only uniform if every row is as tall as the tallest card seen at this width.
   let seen = 0;
   let seenKey = '';
-
-  function scrollParent(el: HTMLElement): HTMLElement {
-    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
-      const oy = getComputedStyle(p).overflowY;
-      if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') return p;
-    }
-    return document.documentElement;
-  }
 
   let scroller: HTMLElement | null = null;
   let raf = 0;

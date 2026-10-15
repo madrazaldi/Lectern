@@ -1,41 +1,47 @@
 <script lang="ts">
-  import { LoaderCircle, Play } from '@lucide/svelte';
+  import { Play } from '@lucide/svelte';
   import { page } from '$app/state';
   import * as abs from '$lib/api/abs';
-  import type { LibraryItem, Series, SeriesRef } from '$lib/api/types';
+  import type { SeriesRef } from '$lib/api/types';
   import { isBook } from '$lib/api/types';
   import Cover from '$lib/components/Cover.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
   import ItemCard from '$lib/components/ItemCard.svelte';
+  import Loading from '$lib/components/Loading.svelte';
+  import ReadMore from '$lib/components/ReadMore.svelte';
+  import { live } from '$lib/stores/live.svelte';
   import { player } from '$lib/stores/player.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { duration, plural, safeHtml } from '$lib/util/format';
-
-  let series = $state<Series | null>(null);
-  let books = $state<LibraryItem[] | null>(null);
-  let error = $state<string | null>(null);
+  import { resource } from '$lib/util/resource.svelte';
+  import { pageTitle } from '$lib/util/title';
 
   const id = $derived(page.params.id!);
+  const library = session.library!;
 
-  $effect(() => {
-    const current = id;
-    series = null;
-    books = null;
-    Promise.all([
-      abs.getSeries(current),
-      abs.getLibraryItems(session.library!.id, { filter: abs.encodeFilter('series', current), sort: 'media.metadata.series.sequence', limit: 200 })
-    ])
-      .then(([s, res]) => {
-        if (current !== id) return;
-        series = s;
-        books = res.results.map((b) => {
-          const meta = isBook(b) ? b.media.metadata.series : undefined;
-          const ref = (Array.isArray(meta) ? meta.find((x) => x.id === current) : meta) as SeriesRef | undefined;
-          return { ...b, sequence: b.sequence ?? ref?.sequence ?? undefined };
-        });
-      })
-      .catch((err) => (error = err.message));
+  const res = resource(() => id, {
+    id: (k) => `series:${k}`,
+    load: async (k) => {
+      const [series, list] = await Promise.all([
+        abs.getSeries(k),
+        abs.getLibraryItems(library.id, { filter: abs.encodeFilter('series', k), sort: 'media.metadata.series.sequence', limit: 200 })
+      ]);
+      const books = list.results.map((b) => {
+        const meta = isBook(b) ? b.media.metadata.series : undefined;
+        const ref = (Array.isArray(meta) ? meta.find((x) => x.id === k) : meta) as SeriesRef | undefined;
+        return { ...b, sequence: b.sequence ?? ref?.sequence ?? undefined };
+      });
+      return { series, books };
+    }
   });
+  const series = $derived(res.data?.series);
+  const books = $derived(res.data?.books);
+
+  $effect(() =>
+    live.onItemChange((_, it) => {
+      if (it.libraryId === library.id && books?.some((b) => b.id === it.id)) void res.refresh();
+    })
+  );
 
   const finished = $derived(books?.filter((b) => session.progressFor(b.id)?.isFinished).length ?? 0);
   const totalLength = $derived(books?.reduce((sum, b) => sum + (isBook(b) ? b.media.duration : 0), 0) ?? 0);
@@ -48,10 +54,12 @@
   const authors = $derived([...new Set(books?.map((b) => (isBook(b) ? b.media.metadata.authorName : '')).filter(Boolean))].join(', '));
 </script>
 
-{#if error}
-  <div class="page"><EmptyState title="Couldn't open this series"><p>{error}</p></EmptyState></div>
+<svelte:head><title>{pageTitle(series?.name ?? 'Series')}</title></svelte:head>
+
+{#if res.error}
+  <div class="page"><ErrorState title="Couldn't open this series" message={res.error} cause={res.cause} onretry={() => res.refresh()} /></div>
 {:else if !series || !books}
-  <div class="loading"><LoaderCircle size={26} class="spin" /></div>
+  <Loading label="Loading series" />
 {:else}
   <div class="page">
     <header class="head">
@@ -70,7 +78,12 @@
           {[plural(books.length, 'book'), duration(totalLength), finished ? `${finished} finished` : ''].filter(Boolean).join(', ')}
         </p>
         {#if series.description}
-          <div class="desc serif selectable">{@html safeHtml(series.description)}</div>
+          <div class="desc serif selectable">
+            <ReadMore lines={5}>
+              <!-- sanitised by safeHtml -->
+              {@html safeHtml(series.description)}
+            </ReadMore>
+          </div>
         {/if}
         {#if next}
           <div class="actions">
@@ -84,6 +97,7 @@
       </div>
     </header>
 
+    <h2 class="sr-only">Books</h2>
     <div class="grid">
       {#each books as b (b.id)}<ItemCard item={b} showSequence />{/each}
     </div>
@@ -91,12 +105,6 @@
 {/if}
 
 <style>
-  .loading {
-    display: grid;
-    place-items: center;
-    height: 60vh;
-    color: var(--text-3);
-  }
   .head {
     display: grid;
     grid-template-columns: 300px 1fr;
@@ -129,6 +137,9 @@
   .facts {
     margin-top: 6px;
     font-size: var(--t-sm);
+  }
+  .desc :global(.more) {
+    font-family: var(--font-sans);
   }
   .desc {
     margin-top: 16px;
