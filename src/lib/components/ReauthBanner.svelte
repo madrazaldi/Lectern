@@ -1,9 +1,10 @@
 <script lang="ts">
   import { KeyRound, LoaderCircle } from '@lucide/svelte';
   import { getCredentials } from '$lib/api/client';
+  import { ssoReauth } from '$lib/stores/reauth.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { errorMessage } from '$lib/stores/toast.svelte';
-  import { isCancelled, reauthenticateWithSso, ssoAvailable } from '$lib/util/sso';
+  import { ssoAvailable } from '$lib/util/sso';
 
   // The server stopped accepting this account. Nothing is lost meanwhile: downloads play and progress waits in the outbox.
   const account = $derived(session.needsReauth ? getCredentials() : null);
@@ -13,10 +14,8 @@
   let secret = $state('');
   let busy = $state(false);
   let error = $state<string | null>(null);
-  /** Set while the browser is out signing in again; abort to stop waiting. */
-  let waiting = $state<AbortController | null>(null);
-  // Stop listening for the browser if this goes away mid-sign-in.
-  $effect(() => () => waiting?.abort());
+  // Single sign-on waits for the browser in a store: this banner goes away in the mini player, the wait doesn't.
+  const waiting = $derived(ssoReauth.waiting);
 
   function host(url: string) {
     try {
@@ -41,21 +40,6 @@
       busy = false;
     }
   }
-
-  async function sso() {
-    if (!account || waiting) return;
-    const { serverUrl } = account;
-    error = null;
-    const ctrl = new AbortController();
-    waiting = ctrl;
-    try {
-      await session.reauthenticateWith((id) => reauthenticateWithSso(id, serverUrl, { signal: ctrl.signal }));
-    } catch (err) {
-      if (!isCancelled(err)) error = errorMessage(err);
-    } finally {
-      if (waiting === ctrl) waiting = null;
-    }
-  }
 </script>
 
 {#if account}
@@ -68,9 +52,9 @@
       {#if isSso}
         {#if waiting}
           <LoaderCircle size={16} class="spin" />
-          <button class="btn btn-quiet" onclick={() => waiting?.abort()}>Cancel</button>
+          <button class="btn btn-quiet" onclick={() => ssoReauth.cancel()}>Cancel</button>
         {:else if ssoAvailable}
-          <button class="btn btn-primary" onclick={sso}>Sign in again</button>
+          <button class="btn btn-primary" onclick={() => void ssoReauth.start()}>Sign in again</button>
         {/if}
       {:else if !open}
         <button class="btn btn-primary" onclick={() => (open = true)}>Sign in again</button>
@@ -82,7 +66,7 @@
       <p>This account signs in with single sign-on, which works in the Lectern desktop app but not in a browser tab.</p>
     {/if}
     {#if isSso}
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {#if ssoReauth.error}<p class="error" role="alert">{ssoReauth.error}</p>{/if}
     {:else if open}
       <form onsubmit={submit} novalidate>
         <!-- svelte-ignore a11y_autofocus -->

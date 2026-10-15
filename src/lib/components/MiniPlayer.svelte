@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { LoaderCircle, Maximize2, Pause, Pin, PinOff, Play, X } from '@lucide/svelte';
+  import { KeyRound, LoaderCircle, Maximize2, Pause, Pin, PinOff, Play, X } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { appWindow, inTauri } from '$lib/native';
   import { player } from '$lib/stores/player.svelte';
   import { prefs } from '$lib/stores/prefs.svelte';
+  import { ssoReauth } from '$lib/stores/reauth.svelte';
+  import { session } from '$lib/stores/session.svelte';
   import { clock } from '$lib/util/format';
   import { mini } from '$lib/util/miniMode';
   import { motion } from '$lib/util/motion';
@@ -66,6 +68,17 @@
 
 {#snippet windowButtons()}
   <div class="window">
+    {#if session.needsReauth}
+      <!-- Signing in again needs the banner, which only the full window has room for. -->
+      <button
+        class="icon-btn reauth"
+        onclick={() => mini.exit()}
+        aria-label="Signed out. Open the full window to sign in again"
+        title={ssoReauth.waiting ? 'Waiting for your browser to sign you in again' : 'Signed out: sign in again in the full window'}
+      >
+        {#if ssoReauth.waiting}<LoaderCircle size={15} class="spin" />{:else}<KeyRound size={15} />{/if}
+      </button>
+    {/if}
     <button
       class="icon-btn"
       aria-pressed={prefs.miniPinned}
@@ -236,6 +249,9 @@
   .window .icon-btn {
     width: 26px;
     height: 26px;
+  }
+  .window .reauth {
+    color: var(--accent);
   }
   .controls {
     display: flex;
