@@ -16,6 +16,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
         }))
+        // After single-instance, which forwards deep links from second instances to it.
+        .plugin(tauri_plugin_deep_link::init())
         // Decorations come from the config: the mini player turns them off, and must not leave them off for the next launch.
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -45,6 +47,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Installers register the URL schemes; an AppImage has nobody to do it for it.
+            #[cfg(target_os = "linux")]
+            if app.env().appimage.is_some() {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(err) = app.deep_link().register_all() {
+                    eprintln!("Could not register sign-in links: {err}");
+                }
+            }
             #[cfg(target_os = "macos")]
             menu::build_macos_menu(app.handle())?;
             tray::build_tray(app.handle())?;

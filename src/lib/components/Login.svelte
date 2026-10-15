@@ -1,12 +1,15 @@
 <script lang="ts">
-  import { KeyRound, LoaderCircle, UserRound } from '@lucide/svelte';
-  import { loginWithApiKey, loginWithPassword, normalizeServerUrl, resolveServer } from '$lib/api/client';
+  import { ExternalLink, KeyRound, LoaderCircle, UserRound } from '@lucide/svelte';
+  import { loginWithApiKey, loginWithPassword, normalizeServerUrl, resolveServer, type ServerStatus } from '$lib/api/client';
   import { session } from '$lib/stores/session.svelte';
   import { friendlyLoginError } from '$lib/util/errors';
   import { roving } from '$lib/util/roving';
+  import { isCancelled, signInWithSso, ssoAvailable } from '$lib/util/sso';
   import { pageTitle } from '$lib/util/title';
 
   const LAST_SERVER = 'lectern.lastServer';
+  /** Pause in typing before looking up the server, so its sign-in options show before submitting. */
+  const PROBE_DELAY_MS = 600;
 
   let server = $state(localStorage.getItem(LAST_SERVER) ?? '');
   let method = $state<'password' | 'apikey'>('password');
@@ -15,6 +18,21 @@
   let apiKey = $state('');
   let busy = $state(false);
   let error = $state<string | null>(null);
+  /** The server last found behind the address field, with what it allows. */
+  let probe = $state<{ input: string; url: string; status: ServerStatus } | null>(null);
+  /** Set while the browser is out signing in; abort to stop waiting. */
+  let waiting = $state<AbortController | null>(null);
+  // Stop listening for the browser if this goes away mid-sign-in.
+  $effect(() => () => waiting?.abort());
+
+  const known = $derived(probe && probe.input === server.trim() ? probe : null);
+  const methods = $derived(known?.status.authMethods ?? ['local']);
+  const openId = $derived(methods.includes('openid'));
+  // Unknown or older servers report nothing useful: offer the usual sign-in.
+  const localAllowed = $derived(methods.includes('local') || !openId);
+  // The single sign-on button takes the lead when there is one.
+  const ssoOffered = $derived(openId && ssoAvailable);
+  const ssoLabel = $derived(known?.status.authFormData?.authOpenIDButtonText?.trim() || 'Sign in with single sign-on');
 
   // A short shelf for the welcome panel: varied heights, a few already "read".
   const spines = Array.from({ length: 22 }, (_, i) => {
@@ -22,27 +40,82 @@
     return { h: 46 + (x - Math.floor(x)) * 54, w: 10 + ((i * 7) % 5) * 4, read: i < 9 };
   });
 
+  async function lookup(input: string) {
+    const { url, status } = await resolveServer(input);
+    probe = { input: input.trim(), url, status };
+    return probe;
+  }
+
+  let probing: string | null = null;
+
+  /** Look the server up quietly; failures wait until the user submits. */
+  function check(input: string) {
+    const key = input.trim();
+    if (!key || probe?.input === key || probing === key) return;
+    probing = key;
+    lookup(input)
+      .catch(() => {})
+      .finally(() => {
+        if (probing === key) probing = null;
+      });
+  }
+
+  $effect(() => {
+    const input = server;
+    const timer = setTimeout(() => check(input), PROBE_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
+
+  async function finish(url: string) {
+    localStorage.setItem(LAST_SERVER, url);
+    // Signing in to another account on top of one already open: restart into it with clean state.
+    if (session.addingAccount) return location.reload();
+    await session.load();
+  }
+
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     error = null;
     if (!server.trim()) return (error = 'Enter your server address.');
+    if (known && !localAllowed) return sso();
     if (method === 'password' && !username.trim()) return (error = 'Enter your username.');
     if (method === 'apikey' && !apiKey.trim()) return (error = 'Paste an API key from your server settings.');
     busy = true;
     let url: string | undefined;
     try {
       url = normalizeServerUrl(server);
-      url = (await resolveServer(server)).url;
+      const found = known ?? (await lookup(server));
+      url = found.url;
+      // The server turned out to take single sign-on only: the form now offers just that.
+      if (!found.status.authMethods.includes('local') && found.status.authMethods.includes('openid')) return;
       if (method === 'password') await loginWithPassword(url, username.trim(), password);
       else await loginWithApiKey(url, apiKey);
-      localStorage.setItem(LAST_SERVER, url);
-      // Signing in to another account on top of one already open: restart into it with clean state.
-      if (session.addingAccount) return location.reload();
-      await session.load();
+      await finish(url);
     } catch (err) {
       error = friendlyLoginError(err, server, url);
     } finally {
       busy = false;
+    }
+  }
+
+  function cancelAdding() {
+    waiting?.abort();
+    session.addingAccount = false;
+  }
+
+  async function sso() {
+    if (!known || waiting || !ssoAvailable) return;
+    const { url } = known;
+    error = null;
+    const ctrl = new AbortController();
+    waiting = ctrl;
+    try {
+      await signInWithSso(url, { signal: ctrl.signal });
+      await finish(url);
+    } catch (err) {
+      if (!isCancelled(err)) error = friendlyLoginError(err, server, url);
+    } finally {
+      if (waiting === ctrl) waiting = null;
     }
   }
 </script>
@@ -67,42 +140,71 @@
 
       <label class="lbl">
         Server address
-        <input class="field" bind:value={server} placeholder="abs.example.com or 192.168.1.20:13378" autocomplete="url" spellcheck="false" />
+        <input
+          class="field"
+          bind:value={server}
+          onblur={() => check(server)}
+          placeholder="abs.example.com or 192.168.1.20:13378"
+          autocomplete="url"
+          spellcheck="false"
+        />
       </label>
 
-      <div class="seg" role="radiogroup" aria-label="Sign-in method" {@attach roving()}>
-        <button type="button" role="radio" aria-checked={method === 'password'} onclick={() => (method = 'password')}>
-          <UserRound size={15} /> Username
-        </button>
-        <button type="button" role="radio" aria-checked={method === 'apikey'} onclick={() => (method = 'apikey')}>
-          <KeyRound size={15} /> API key
-        </button>
-      </div>
+      {#if openId}
+        {#if !ssoAvailable}
+          <p class="note">This server signs in with single sign-on, which works in the Lectern desktop app but not in a browser tab.</p>
+        {:else if waiting}
+          <div class="waiting" role="status">
+            <LoaderCircle size={18} class="spin" />
+            <span>Waiting for your browser. Finish signing in there and Lectern will pick it up.</span>
+            <button type="button" class="btn btn-quiet" onclick={() => waiting?.abort()}>Cancel</button>
+          </div>
+        {:else}
+          <button type="button" class="btn btn-primary btn-lg submit" onclick={sso} disabled={busy}>
+            <ExternalLink size={17} />
+            {ssoLabel}
+          </button>
+        {/if}
+        {#if localAllowed}<p class="or" aria-hidden="true"><span>or</span></p>{/if}
+      {/if}
 
-      {#if method === 'password'}
-        <label class="lbl">
-          Username
-          <input class="field" bind:value={username} autocomplete="username" spellcheck="false" />
-        </label>
-        <label class="lbl">
-          Password
-          <input class="field" type="password" bind:value={password} autocomplete="current-password" />
-        </label>
-      {:else}
-        <label class="lbl">
-          API key
-          <textarea class="field key" bind:value={apiKey} rows="3" spellcheck="false" placeholder="Create one under Settings → API Keys on your server"
-          ></textarea>
-        </label>
+      {#if localAllowed}
+        <div class="seg" role="radiogroup" aria-label="Sign-in method" {@attach roving()}>
+          <button type="button" role="radio" aria-checked={method === 'password'} onclick={() => (method = 'password')}>
+            <UserRound size={15} /> Username
+          </button>
+          <button type="button" role="radio" aria-checked={method === 'apikey'} onclick={() => (method = 'apikey')}>
+            <KeyRound size={15} /> API key
+          </button>
+        </div>
+
+        {#if method === 'password'}
+          <label class="lbl">
+            Username
+            <input class="field" bind:value={username} autocomplete="username" spellcheck="false" />
+          </label>
+          <label class="lbl">
+            Password
+            <input class="field" type="password" bind:value={password} autocomplete="current-password" />
+          </label>
+        {:else}
+          <label class="lbl">
+            API key
+            <textarea class="field key" bind:value={apiKey} rows="3" spellcheck="false" placeholder="Create one under Settings → API Keys on your server"
+            ></textarea>
+          </label>
+        {/if}
       {/if}
 
       {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-      <button class="btn btn-primary btn-lg submit" disabled={busy}>
-        {#if busy}<LoaderCircle size={18} class="spin" /> Connecting{:else}Sign in{/if}
-      </button>
+      {#if localAllowed}
+        <button class="btn btn-lg submit" class:btn-primary={!ssoOffered} class:btn-quiet={ssoOffered} disabled={busy || !!waiting}>
+          {#if busy}<LoaderCircle size={18} class="spin" /> Connecting{:else}Sign in{/if}
+        </button>
+      {/if}
       {#if session.addingAccount}
-        <button type="button" class="btn btn-quiet btn-lg submit" onclick={() => (session.addingAccount = false)} disabled={busy}>Cancel</button>
+        <button type="button" class="btn btn-quiet btn-lg submit" onclick={cancelAdding} disabled={busy}>Cancel</button>
       {/if}
     </form>
   </section>
@@ -254,6 +356,39 @@
   .submit {
     justify-content: center;
     margin-top: 4px;
+  }
+  .note {
+    font-size: var(--t-sm);
+    color: var(--text-2);
+  }
+  .waiting {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--r-md);
+    background: var(--raised);
+    border: 1px solid var(--rule-soft);
+    font-size: var(--t-sm);
+    color: var(--text-2);
+  }
+  .waiting span {
+    flex: 1;
+  }
+  .or {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .or::before,
+  .or::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--rule-soft);
   }
   @media (max-width: 1000px) {
     .login {

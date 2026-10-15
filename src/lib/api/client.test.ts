@@ -449,3 +449,209 @@ describe('resolveServer', () => {
     expect(http.calls).toEqual(['GET /status']);
   });
 });
+
+describe('single sign-on', () => {
+  const IDP = 'https://idp.example.com/authorize?client_id=abs';
+
+  /** A redirect as the native HTTP plugin hands it over: Set-Cookie stays readable (the plugin rebuilds the headers). */
+  function redirect(
+    location: string,
+    cookies: string[] = ['connect.sid=s%3Aabc.def; Path=/; HttpOnly', 'auth_method=openid-mobile; Max-Age=315360000; Path=/; HttpOnly']
+  ) {
+    const res = new Response('Found. Redirecting', { status: 302 });
+    Object.defineProperty(res, 'headers', { value: new Headers([['location', location], ...cookies.map((c): [string, string] => ['set-cookie', c])]) });
+    return res;
+  }
+
+  /** The server's side: allows the given redirect URIs, and finishes the sign-in for `user` when the cookie and verifier check out. */
+  function ssoServer(opts: { allowed?: string[]; user?: Record<string, unknown> } = {}) {
+    const allowed = opts.allowed ?? ['audiobookshelf://oauth'];
+    const seen = { challenge: '', redirectUri: '', state: '', cookie: '', verifier: '', maxRedirections: undefined as unknown };
+    route(async (url, init) => {
+      if (url.pathname === '/auth/openid') {
+        seen.maxRedirections = (init as { maxRedirections?: number }).maxRedirections;
+        seen.redirectUri = url.searchParams.get('redirect_uri')!;
+        if (!allowed.includes(seen.redirectUri)) return new Response('Invalid redirect_uri', { status: 400 });
+        expect(url.searchParams.get('response_type')).toBe('code');
+        expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+        seen.challenge = url.searchParams.get('code_challenge')!;
+        seen.state = url.searchParams.get('state')!;
+        return redirect(IDP);
+      }
+      if (url.pathname === '/auth/openid/callback') {
+        seen.cookie = (init.headers as Record<string, string>).Cookie ?? '';
+        seen.verifier = url.searchParams.get('code_verifier')!;
+        if (!seen.cookie.includes('connect.sid=')) return new Response('No session', { status: 400 });
+        if ((await client.pkceChallenge(seen.verifier)) !== seen.challenge || url.searchParams.get('state') !== seen.state) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const user = opts.user ?? { id: 'u1', username: 'reader' };
+        return json({ user: { ...user, accessToken: jwt('sso-a'), refreshToken: jwt('sso-r'), mediaProgress: [] }, userDefaultLibraryId: 'lib' });
+      }
+      if (url.pathname === '/auth/refresh') return json({ user: { accessToken: jwt('sso-a2'), refreshToken: jwt('sso-r2') } });
+      return new Response('', { status: 200 });
+    });
+    return seen;
+  }
+
+  async function ssoSignIn() {
+    const pending = await client.beginOpenIdLogin(SERVER);
+    await client.completeOpenIdLogin(pending, `audiobookshelf://oauth/?code=abc&state=${pending.state}`);
+    http.calls = [];
+    return pending;
+  }
+
+  it('makes PKCE challenges as RFC 7636 does', async () => {
+    await expect(client.pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).resolves.toBe('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+    const verifier = client.randomToken();
+    expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(client.randomToken()).not.toBe(verifier);
+  });
+
+  it('collects every cookie the server sets, with or without getSetCookie', () => {
+    const headers = new Headers([
+      ['set-cookie', 'connect.sid=s%3Aabc; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT; HttpOnly'],
+      ['set-cookie', 'auth_method=openid-mobile; Path=/']
+    ]);
+    expect(client.cookiesFrom(headers)).toBe('connect.sid=s%3Aabc; auth_method=openid-mobile');
+    // Older webviews: one comma-joined value, with a comma inside the date.
+    const joined = new Headers({ 'set-cookie': 'connect.sid=s%3Aabc; Expires=Wed, 21 Oct 2026 07:28:00 GMT; HttpOnly, auth_method=openid-mobile; Path=/' });
+    Object.defineProperty(joined, 'getSetCookie', { value: undefined });
+    expect(client.cookiesFrom(joined)).toBe('connect.sid=s%3Aabc; auth_method=openid-mobile');
+    expect(client.cookiesFrom(new Headers())).toBe('');
+  });
+
+  it('starts with the server’s redirect, without following it, and keeps its cookies', async () => {
+    const seen = ssoServer();
+    const pending = await client.beginOpenIdLogin(SERVER);
+    expect(seen.maxRedirections).toBe(0);
+    expect(pending).toMatchObject({ serverUrl: SERVER, authorizeUrl: IDP, redirectUri: 'audiobookshelf://oauth', state: seen.state });
+    expect(pending.cookie).toBe('connect.sid=s%3Aabc.def; auth_method=openid-mobile');
+    await expect(client.pkceChallenge(pending.verifier)).resolves.toBe(seen.challenge);
+  });
+
+  it('falls back to lectern://oauth when the server doesn’t allow audiobookshelf://oauth', async () => {
+    ssoServer({ allowed: ['lectern://oauth'] });
+    const pending = await client.beginOpenIdLogin(SERVER);
+    expect(pending.redirectUri).toBe('lectern://oauth');
+    expect(http.calls).toEqual(['GET /auth/openid', 'GET /auth/openid']);
+  });
+
+  it('tells the user what to ask their admin when no redirect is allowed', async () => {
+    ssoServer({ allowed: [] });
+    const err = await client.beginOpenIdLogin(SERVER).then(() => null, caught);
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/lectern:\/\/oauth.*Allowed Mobile Redirect URIs/);
+  });
+
+  it('only opens web pages in the browser', async () => {
+    route(() => redirect('file:///etc/passwd'));
+    await expect(client.beginOpenIdLogin(SERVER)).rejects.toThrow(/couldn’t start single sign-on/);
+    route(() => new Response('OpenID not configured', { status: 500 }));
+    await expect(client.beginOpenIdLogin(SERVER)).rejects.toThrow(/couldn’t start single sign-on/);
+  });
+
+  it('reads the deep link the browser comes back with', () => {
+    const pending = { redirectUri: 'audiobookshelf://oauth', state: 'st' };
+    // ABS adds a trailing slash; accept it either way.
+    expect(client.parseOpenIdCallback(pending, 'audiobookshelf://oauth/?code=c%2B1&state=st')).toBe('c+1');
+    expect(client.parseOpenIdCallback(pending, 'audiobookshelf://oauth?code=c1&state=st')).toBe('c1');
+    expect(client.isOpenIdCallback(pending, 'lectern://oauth/?code=c1&state=st')).toBe(false);
+    expect(client.isOpenIdCallback({ redirectUri: 'lectern://oauth' }, 'lectern://oauth/?code=c1&state=st')).toBe(true);
+    expect(client.isOpenIdCallback(pending, 'audiobookshelf://item/abc')).toBe(false);
+    expect(() => client.parseOpenIdCallback(pending, 'audiobookshelf://oauth/?code=c1&state=other')).toThrow(/earlier attempt/);
+    expect(() => client.parseOpenIdCallback(pending, 'audiobookshelf://oauth/?code=c1')).toThrow(/earlier attempt/);
+    // The identity provider said no: ABS passes that on as code=undefined.
+    expect(() => client.parseOpenIdCallback(pending, 'audiobookshelf://oauth/?code=undefined&state=st')).toThrow(/didn’t complete/);
+    expect(() => client.parseOpenIdCallback(pending, 'audiobookshelf://oauth/?state=st')).toThrow(/didn’t complete/);
+  });
+
+  it('finishes with the session cookie and verifier, and saves a refreshable account', async () => {
+    const seen = ssoServer();
+    const pending = await client.beginOpenIdLogin(SERVER);
+    const data = await client.completeOpenIdLogin(pending, `audiobookshelf://oauth/?code=abc&state=${pending.state}`);
+    expect(data.userDefaultLibraryId).toBe('lib');
+    expect(seen.cookie).toBe(pending.cookie);
+    expect(seen.verifier).toBe(pending.verifier);
+    const account = client.getCredentials()!;
+    expect(account).toMatchObject({ serverUrl: SERVER, method: 'openid', username: 'reader', userId: 'u1' });
+    expect(account.refreshToken).toBeTruthy();
+    // Renews like a password account when the access token runs out.
+    const fresher = jwt('sso-a2');
+    http.calls = [];
+    route((url, init) => {
+      if (url.pathname === '/auth/refresh') return json({ user: { accessToken: fresher, refreshToken: jwt('sso-r2') } });
+      const auth = (init.headers as Record<string, string>).Authorization;
+      return auth === `Bearer ${fresher}` ? json({ ok: true }) : new Response('Unauthorized', { status: 401 });
+    });
+    await expect(client.request('/api/me')).resolves.toEqual({ ok: true });
+    expect(http.calls).toEqual(['GET /api/me', 'POST /auth/refresh', 'GET /api/me']);
+    // And the account comes back next launch.
+    await fresh();
+    expect(client.getCredentials()).toMatchObject({ method: 'openid', userId: 'u1' });
+  });
+
+  it('refuses a callback for another sign-in without asking the server', async () => {
+    ssoServer();
+    const pending = await client.beginOpenIdLogin(SERVER);
+    http.calls = [];
+    await expect(client.completeOpenIdLogin(pending, 'audiobookshelf://oauth/?code=abc&state=forged')).rejects.toThrow(/earlier attempt/);
+    expect(http.calls).toEqual([]);
+    expect(client.getCredentials()).toBeNull();
+  });
+
+  it('explains a lost session', async () => {
+    ssoServer();
+    const pending = await client.beginOpenIdLogin(SERVER);
+    await expect(client.completeOpenIdLogin({ ...pending, cookie: '' }, `audiobookshelf://oauth/?code=abc&state=${pending.state}`)).rejects.toThrow(
+      /took too long or the server restarted/
+    );
+  });
+
+  it('reuses the saved account for the same server and user', async () => {
+    await signIn('reader', 'u1');
+    const id = client.getCredentials()!.id;
+    ssoServer({ user: { id: 'u1', username: 'reader' } });
+    await ssoSignIn();
+    expect(client.listAccounts()).toHaveLength(1);
+    expect(client.getCredentials()).toMatchObject({ id, method: 'openid' });
+  });
+
+  it('signs an SSO account in again in place', async () => {
+    ssoServer();
+    await ssoSignIn();
+    const id = client.getCredentials()!.id;
+    route((url) => (url.pathname === '/auth/refresh' ? json({ error: 'Invalid refresh token' }, 401) : new Response('Unauthorized', { status: 401 })));
+    await client.request('/api/me').catch(() => {});
+    expect(client.needsReauth()).toBe(true);
+    // A password won't do for this account.
+    await expect(client.reauthenticate(id, 'pw')).rejects.toThrow(/single sign-on/);
+
+    ssoServer();
+    const changed = vi.fn();
+    client.onAccountChanged(changed);
+    const pending = await client.beginOpenIdLogin(SERVER);
+    await client.reauthenticateWithOpenId(id, pending, `audiobookshelf://oauth/?code=abc&state=${pending.state}`);
+    expect(client.needsReauth()).toBe(false);
+    expect(client.getCredentials()).toMatchObject({ id, method: 'openid' });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it('refuses to sign an SSO account in again as someone else', async () => {
+    ssoServer();
+    await ssoSignIn();
+    const id = client.getCredentials()!.id;
+    const before = client.getCredentials()!.accessToken;
+    ssoServer({ user: { id: 'u2', username: 'other' } });
+    const pending = await client.beginOpenIdLogin(SERVER);
+    await expect(client.reauthenticateWithOpenId(id, pending, `audiobookshelf://oauth/?code=abc&state=${pending.state}`)).rejects.toThrow(/as other/);
+    expect(client.getCredentials()?.accessToken).toBe(before);
+  });
+
+  it('ends the server session on sign-out', async () => {
+    ssoServer();
+    await ssoSignIn();
+    await client.logout();
+    expect(http.calls).toEqual(['POST /logout']);
+  });
+});
