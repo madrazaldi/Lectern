@@ -27,9 +27,10 @@
     id: (k) => `home:${k}`,
     load: async (libraryId) => {
       const shelves = await abs.getPersonalized(libraryId);
-      const candidate =
-        (player.item?.libraryId === libraryId && !player.episode ? player.item : null) ??
-        (shelves.find((x) => x.id === 'continue-listening')?.entities[0] as LibraryItem | undefined);
+      // The loaded title leads unless it's finished and not playing: then offer what's actually in progress.
+      const loaded = player.item?.libraryId === libraryId && !player.episode ? player.item : null;
+      const loadedDone = !!loaded && player.status !== 'playing' && !!session.progressFor(loaded.id)?.isFinished;
+      const candidate = (loadedDone ? null : loaded) ?? (shelves.find((x) => x.id === 'continue-listening')?.entities[0] as LibraryItem | undefined);
       // Resolve the hero before showing anything, so the page doesn't jump when it arrives.
       const hero = candidate?.mediaType === 'book' ? await abs.getItem(candidate.id).catch(() => null) : null;
       return { shelves, hero };

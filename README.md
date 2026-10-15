@@ -5,9 +5,15 @@ A desktop listening room for [Audiobookshelf](https://www.audiobookshelf.org). B
 ## Features
 
 - Browse books, series, authors, collections and playlists; filter by genre, author, narrator, series, tag, language or publisher; grid or list view (virtualized, so large libraries stay fast).
-- Chapter-aware player with gapless multi-file playback, sleep timer (minutes or end of chapter), smart rewind, bookmarks, and per-title speed.
+- Chapter-aware player with gapless multi-file playback, sleep timer (minutes, end of chapter or end of title), smart rewind, bookmarks, and per-title speed.
+- **Mini player**: shrink the window to a small always-on-top player (⌘⇧M), and back to exactly where it was.
+- **Ebook reader** for EPUB and PDF files in your library, with reading position synced to the server (shared with the Audiobookshelf web reader).
+- **Podcast management**: search for or paste a feed to add a podcast, find and download episodes to the server, check for new episodes, and see the latest episodes across the library (for users allowed to manage the library).
+- **Collections**: create and edit them, add titles from the right-click menu, and reorder by drag or keyboard; playlists reorder the same way.
+- **Listening history** by day, a year in review, and library stats; "More in this series" and "More by this author" on every book.
+- Right-click (or Shift+F10) menus on every title, a shortcut overview (press ?), and screen reader and keyboard support throughout.
 - **Up Next** queue, with optional auto-continue to the next book in a series or the next podcast episode.
-- **Offline downloads**: play downloaded titles with no connection; listening is recorded locally and synced when the server is back.
+- **Offline downloads** that resume after an interruption and are checked for completeness: play downloaded titles with no connection; listening is recorded locally and synced when the server is back.
 - **Progress you can't lose**: the position is written ahead to disk between syncs and replayed after a crash or force-quit, but never over newer progress from another device. Pausing here and listening on your phone, then pressing play here, picks up where the phone left off.
 - **Live sync** over Audiobookshelf's socket.io feed: progress from other devices and library changes appear as they happen.
 - Native integration: menu bar (tray) controls, a full macOS menu bar with shortcuts, closing the window keeps playback going (quit with ⌘Q), single instance, system Now Playing / media keys via the Media Session API.
