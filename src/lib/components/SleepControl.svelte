@@ -9,7 +9,7 @@
   const active = $derived(player.sleep.kind !== 'off');
 </script>
 
-<Popover label="Sleep timer" {placement} pressed={active} triggerClass="icon-btn sleep-trigger">
+<Popover label="Sleep timer" {placement} {active} triggerClass="icon-btn sleep-trigger">
   {#snippet trigger()}
     <Moon size={18} />
     {#if active && showLabel}<span class="left num">{clock(player.sleepRemaining)}</span>{/if}

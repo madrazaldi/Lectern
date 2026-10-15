@@ -64,7 +64,7 @@
 <div class="picker">
   <p class="head">Add to playlist</p>
   {#if !playlists}
-    <div class="loading"><LoaderCircle size={18} class="spin" /></div>
+    <div class="loading" role="status"><LoaderCircle size={18} class="spin" aria-hidden="true" /><span class="sr-only">Loading playlists…</span></div>
   {:else}
     <ul>
       {#each playlists as p (p.id)}

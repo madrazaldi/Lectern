@@ -2,6 +2,7 @@
   import { Check, ListFilter, Search } from '@lucide/svelte';
   import { encodeFilter } from '$lib/api/abs';
   import type { FilterData } from '$lib/api/types';
+  import { roving } from '$lib/util/roving';
   import Popover from './Popover.svelte';
 
   interface Props {
@@ -75,13 +76,13 @@
 
 {#if groups.length}
   <div class="fm">
-    <Popover label="Filter" placement="down" align="start" pressed={isActive} triggerClass="trigger">
+    <Popover label="Filter" placement="down" align="start" active={isActive} triggerClass="trigger">
       {#snippet trigger()}
         <ListFilter size={15} /> Filter
       {/snippet}
       {#snippet children({ close })}
         <div class="menu">
-          <div class="groups" role="radiogroup" aria-label="Filter by">
+          <div class="groups" role="radiogroup" aria-label="Filter by" {@attach roving({ orientation: 'both' })}>
             {#each groups as g (g.key)}
               <button
                 class="g"
@@ -143,7 +144,7 @@
     color: var(--text);
     border-color: var(--text-3);
   }
-  .fm :global(.trigger[aria-pressed='true']),
+  .fm :global(.trigger.active),
   .fm :global(.trigger[aria-expanded='true']) {
     color: var(--text);
     border-color: var(--accent);

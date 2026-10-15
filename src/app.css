@@ -38,7 +38,8 @@
   --rule-soft: #2a2632;
   --text: #eee7da;
   --text-2: #b3abbd;
-  --text-3: #7d7588;
+  /* Faint text still clears 4.5:1 on every surface it sits on (5.5 ground, 5.0 raised, 4.5 raised-2). */
+  --text-3: #958da1;
   --danger: #ec7f72;
   --accent-ink: #1b1922;
   --shadow-cover: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -8px rgb(0 0 0 / 0.55);
@@ -55,7 +56,8 @@
   --rule-soft: #e2dee7;
   --text: #211d29;
   --text-2: #57506a;
-  --text-3: #8b849a;
+  /* 5.0:1 on the ground, 4.6 on the sidebar, 5.5 raised, 5.8 on white. */
+  --text-3: #696279;
   --danger: #b8402f;
   --accent-ink: #ffffff;
   --shadow-cover: 0 1px 2px rgb(30 20 40 / 0.18), 0 12px 28px -10px rgb(30 20 40 / 0.35);
@@ -276,7 +278,8 @@ img {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
-.icon-btn[aria-pressed='true'] {
+.icon-btn[aria-pressed='true'],
+.icon-btn.active {
   color: var(--accent);
 }
 
@@ -331,7 +334,41 @@ img {
   color: var(--text-3);
 }
 
+/* Loading spinners (lucide's LoaderCircle with class="spin"). */
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+  A link whose click area covers its whole card or row (.stretch-host), so the card can hold other
+  buttons (Play) beside the link rather than inside it. The host draws the focus ring.
+*/
+.stretch-host {
+  position: relative;
+}
+.stretched::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.stretched:focus-visible {
+  outline: none;
+}
+.stretch-host:has(.stretched:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
   *,
   *::before,
   *::after {

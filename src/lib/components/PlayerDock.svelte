@@ -192,14 +192,6 @@
     justify-content: flex-end;
     gap: 4px;
   }
-  :global(.spin) {
-    animation: spin 0.9s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
   @media (max-width: 1120px) {
     .dock {
       grid-template-columns: minmax(180px, 1fr) minmax(340px, 2fr) auto;
