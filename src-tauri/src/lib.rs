@@ -57,6 +57,8 @@ pub fn run() {
             downloads::list_download_meta,
             downloads::remove_download,
             downloads::downloads_usage,
+            downloads::downloads_free_space,
+            downloads::prune_downloads,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lectern")
