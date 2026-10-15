@@ -1,5 +1,16 @@
 import * as abs from '$lib/api/abs';
-import { ApiError, coverUrl, ensureFreshToken, mediaUrl, scopedKey } from '$lib/api/client';
+import {
+  ApiError,
+  beforeAccountChange,
+  coverUrl,
+  ensureFreshToken,
+  getCredentials,
+  isAuthLost,
+  isUnreachable,
+  mediaUrl,
+  onAccountChanged,
+  scopedKey
+} from '$lib/api/client';
 import type { Chapter, LibraryItem, MediaProgress, PlaybackSession, PodcastEpisode } from '$lib/api/types';
 import { isBook, isPodcast, type PodcastMetadata, type SeriesRef } from '$lib/api/types';
 import { fileSrc, setNowPlaying } from '$lib/native';
@@ -18,14 +29,28 @@ const SYNC_EVERY_MS = 15_000;
 const WRITE_AHEAD_MS = 5_000;
 /** Start buffering the next file this many seconds before the current one ends. */
 const PRELOAD_LEAD_S = 30;
+/** After a file fails to preload, leave it this long before trying again. */
+const PRELOAD_RETRY_MS = 30_000;
 const LAST_KEY = 'lectern.lastPlayed';
 const QUEUE_KEY = 'lectern.queue';
 
-export type SleepMode = { kind: 'off' } | { kind: 'timer'; endsAt: number; minutes: number } | { kind: 'chapter'; chapterIndex: number };
+export type SleepMode =
+  | { kind: 'off' }
+  /** Counts down only while playing: `endsAt` moves on while paused. Carries on into whatever plays next. */
+  | { kind: 'timer'; endsAt: number; minutes: number }
+  /** Pause when playback runs past the end of this chapter. Seeking re-targets it to wherever playback lands. */
+  | { kind: 'chapter'; chapterIndex: number }
+  /** Pause at the end of the book or episode instead of going on to the next. */
+  | { kind: 'book' };
 
 interface LastPlayed {
   itemId: string;
   episodeId: string | null;
+}
+
+/** A position chosen in the dock before playback started, to start from instead of the saved one. */
+interface Picked extends LastPlayed {
+  time: number;
 }
 
 interface PlayTrack {
@@ -79,7 +104,9 @@ class Player {
       ? Math.max(0, (this.sleep.endsAt - this.now) / 1000)
       : this.sleep.kind === 'chapter' && this.chapter
         ? Math.max(0, this.chapter.end - this.currentTime) / (this.rate || 1)
-        : 0
+        : this.sleep.kind === 'book'
+          ? Math.max(0, this.duration - this.currentTime) / (this.rate || 1)
+          : 0
   );
 
   private elements: HTMLAudioElement[] = [];
@@ -95,16 +122,50 @@ class Player {
   /** Position in the last sync the server acknowledged, to tell our own echoes from other devices' progress. */
   private lastSentTime = -1;
   private syncing: Promise<void> | null = null;
+  /** A forced sync asked for while another was in flight, sent as soon as that one lands. */
+  private followUp: Promise<void> | null = null;
   private pausedAt = 0;
   private recoveringFrom = -1;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private pendingSeek: number | null = null;
+  /** Bumped by every play(); an older call that finds it changed stops touching anything. */
+  private playGen = 0;
+  /** The latest play()'s session request. The server closes a device's open sessions when it starts another, so they go out in order. */
+  private starting: Promise<unknown> = Promise.resolve();
+  private picked: Picked | null = null;
+  /** When each track last failed to preload. */
+  private preloadFailed = new Map<number, number>();
+  /** Server session left open when the connection dropped mid-listen; closed once the server is back. */
+  private orphan: string | null = null;
+  private rejoining: Promise<void> | null = null;
+  /** Account whose queue and last-played item are loaded. */
+  private attachedTo: string | null = null;
+
+  constructor() {
+    // Save and close under the old account before requests and scoped keys switch to the new one.
+    beforeAccountChange(() => this.release());
+    onAccountChanged(() => (this.attachedTo = null));
+  }
 
   rateFor(itemId: string) {
     return (prefs.perItemSpeed ? prefs.itemRates[itemId] : undefined) ?? prefs.playbackRate;
   }
 
+  /** Set up audio once, and load the signed-in account's queue and last-played item when it changes. */
   init() {
+    this.setup();
+    const account = getCredentials()?.id ?? null;
+    if (!account || this.attachedTo === account) return;
+    this.attachedTo = account;
+    try {
+      this.queue = JSON.parse(localStorage.getItem(scopedKey(QUEUE_KEY)) ?? '[]');
+    } catch {
+      this.queue = [];
+    }
+    void this.restoreLast();
+  }
+
+  private setup() {
     if (this.audio) return;
     this.elements = [this.createElement(), this.createElement()];
     this.audio = this.elements[0];
@@ -115,12 +176,9 @@ class Player {
       if (this.session && !this.local) void abs.closeSession(this.session.id, this.syncPayload());
     });
     outbox.busy = (key) => !!this.item && !!this.session && !this.local && key === progressKey(this.item.id, this.episode?.id ?? null);
+    outbox.prepare = () => this.recordLocal();
     session.onRemoteProgress = (p, from) => this.reconcile(p, from);
-    try {
-      this.queue = JSON.parse(localStorage.getItem(scopedKey(QUEUE_KEY)) ?? '[]');
-    } catch {
-      this.queue = [];
-    }
+    session.onReconnect(() => this.rejoin());
     this.setupMediaSession();
     $effect.root(() => {
       // Keep the OS (lock screen, Control Center, menu bar) in step with what's playing.
@@ -144,12 +202,12 @@ class Player {
         void setNowPlaying(state).catch(() => {});
       });
     });
-    void this.restoreLast();
   }
 
   /** Short description of the sleep timer, for menus. */
   get sleepLabel() {
     if (this.sleep.kind === 'chapter') return 'end of chapter';
+    if (this.sleep.kind === 'book') return 'end of book';
     if (this.sleep.kind === 'timer') return `${Math.max(1, Math.ceil(this.sleepRemaining / 60))} min left`;
     return null;
   }
@@ -166,6 +224,7 @@ class Player {
       const t = this.tracks[this.trackIndex];
       if (t && this.pendingSeek === null) this.currentTime = t.startOffset + a.currentTime;
       if (t && t.duration - a.currentTime < PRELOAD_LEAD_S) this.preloadNext();
+      this.checkChapterSleep();
     });
     a.addEventListener('loadedmetadata', () => {
       if (!active()) return;
@@ -185,12 +244,19 @@ class Player {
     a.addEventListener('canplay', () => active() && (this.buffering = false));
     a.addEventListener('pause', () => {
       // A file reaching its end pauses itself just before `ended`; the next file takes over from there.
-      if (active() && !a.ended && this.status === 'playing') this.status = 'paused';
+      if (!active() || a.ended || this.status !== 'playing') return;
+      // Paused from outside (the OS, headphones unplugged): save like our own pause does.
+      this.status = 'paused';
+      this.settlePaused();
     });
     a.addEventListener('ended', () => active() && void this.onTrackEnded());
     a.addEventListener('error', () => {
-      if (active()) void this.onAudioError();
-      else if (Number(a.dataset.track) === this.standbyTrack) this.standbyTrack = -1;
+      if (active()) return void this.onAudioError();
+      if (!a.getAttribute('src') || Number(a.dataset.track) !== this.standbyTrack) return;
+      // A failed preload: back off rather than retry on every timeupdate; the hand-over loads it fresh.
+      this.preloadFailed.set(this.standbyTrack, Date.now());
+      this.standbyTrack = -1;
+      a.removeAttribute('src');
     });
     return a;
   }
@@ -201,6 +267,7 @@ class Player {
 
   /** Show the last thing listened to in the dock, ready to resume, without opening a session. */
   private async restoreLast() {
+    const account = getCredentials()?.id;
     const raw = localStorage.getItem(scopedKey(LAST_KEY));
     if (!raw || this.item) return;
     let last: LastPlayed;
@@ -210,13 +277,18 @@ class Player {
       localStorage.removeItem(scopedKey(LAST_KEY));
       return;
     }
+    // Offline, the download is the only copy of the item there is, and downloads load alongside us at startup.
+    await downloads.load();
+    if (this.item || getCredentials()?.id !== account) return;
     let item: LibraryItem | null = downloads.ready(last.itemId, last.episodeId)?.item ?? null;
-    try {
-      item = await abs.getItem(last.itemId);
-    } catch (err) {
-      if (!(err instanceof ApiError && err.status === 0)) localStorage.removeItem(scopedKey(LAST_KEY));
+    if (session.online || !item) {
+      try {
+        item = await abs.getItem(last.itemId);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) localStorage.removeItem(scopedKey(LAST_KEY));
+      }
     }
-    if (!item || this.item) return;
+    if (!item || this.item || getCredentials()?.id !== account) return;
     this.item = item;
     this.episode = last.episodeId && isPodcast(item) ? (item.media.episodes?.find((e) => e.id === last.episodeId) ?? null) : null;
     const progress = session.progressFor(item.id, last.episodeId);
@@ -230,26 +302,36 @@ class Player {
     return this.item?.id === itemId && (this.episode?.id ?? null) === (episodeId ?? null);
   }
 
-  /** Start (or resume) an item. `startAt` overrides the saved position. */
+  /**
+   * Start (or resume) an item. `startAt` overrides the saved position. A later call supersedes an earlier one
+   * still loading: only the latest touches the player, and sessions opened for the others are closed.
+   */
   async play(itemId: string, episodeId: string | null = null, startAt?: number): Promise<void> {
     this.init();
+    const gen = ++this.playGen;
     if (this.isCurrent(itemId, episodeId) && this.ready) {
       if (startAt !== undefined) await this.seek(startAt);
       return this.resume();
     }
-    await this.stop();
+    // A duration timer carries on into the next thing; the others belong to what was playing.
+    await this.stop({ keepSleep: this.sleep.kind === 'timer' });
+    if (gen !== this.playGen) return;
     this.status = 'loading';
     const download = downloads.ready(itemId, episodeId);
     try {
       let s: PlaybackSession | null = null;
       try {
-        await ensureFreshToken();
-        s = await abs.startPlayback(itemId, episodeId);
+        s = await this.openSession(itemId, episodeId, gen);
       } catch (err) {
-        // No server, but the files are here: listen anyway and record the session locally.
-        if (!download || !(err instanceof ApiError && err.status === 0)) throw err;
+        // No server (or it wants a new sign-in), but the files are here: listen anyway and record the session locally.
+        if (!download || !(isUnreachable(err) || isAuthLost(err))) throw err;
       }
+      if (gen !== this.playGen) return;
       const item = s?.libraryItem ?? download?.item ?? (await abs.getItem(itemId));
+      if (gen !== this.playGen) {
+        if (s) void abs.closeSession(s.id).catch(() => {});
+        return;
+      }
       this.item = item;
       this.episode = episodeId && isPodcast(item) ? (item.media.episodes?.find((e) => e.id === episodeId) ?? null) : null;
       this.fromDownload = !!download;
@@ -257,22 +339,64 @@ class Player {
       this.duration = download?.duration ?? s!.duration;
       this.trackIndex = -1;
       this.standbyTrack = -1;
+      this.preloadFailed.clear();
       this.listened = 0;
       this.lastSync = Date.now();
       this.lastSentTime = s?.currentTime ?? -1;
       localStorage.setItem(scopedKey(LAST_KEY), JSON.stringify({ itemId, episodeId } satisfies LastPlayed));
       void this.applyTint();
 
-      let start = startAt ?? s?.currentTime ?? session.progressFor(itemId, episodeId)?.currentTime ?? 0;
+      // A position picked in the dock (before or while this loaded) wins over the saved one.
+      let start = this.pickedFor(itemId, episodeId) ?? startAt ?? s?.currentTime ?? session.progressFor(itemId, episodeId)?.currentTime ?? 0;
+      this.picked = null;
       if (start >= this.duration - 2) start = 0;
       this.currentTime = start;
       this.session = s;
       if (!s) this.local = this.newLocalSession();
       await this.loadAt(start);
-      await this.audio!.play();
+      if (gen !== this.playGen) return;
+      await this.startAudio();
     } catch (err) {
+      if (gen !== this.playGen) return;
       this.status = this.item ? 'paused' : 'idle';
       toast(`Couldn't start playback. ${errorMessage(err)}`, { tone: 'error' });
+    }
+  }
+
+  /** Open a server session for play() call `gen`, after any earlier call's request. Null if superseded meanwhile. */
+  private openSession(itemId: string, episodeId: string | null, gen: number): Promise<PlaybackSession | null> {
+    const prev = this.starting;
+    const open = (async () => {
+      await prev.catch(() => {});
+      if (gen !== this.playGen) return null;
+      await ensureFreshToken();
+      const s = await abs.startPlayback(itemId, episodeId);
+      if (gen === this.playGen) return s;
+      await abs.closeSession(s.id).catch(() => {});
+      return null;
+    })();
+    this.starting = open.catch(() => null);
+    return open;
+  }
+
+  private pickedFor(itemId: string, episodeId: string | null) {
+    const p = this.picked;
+    return p && p.itemId === itemId && p.episodeId === episodeId ? p.time : undefined;
+  }
+
+  /**
+   * Start the element. A media error is left to the element's `error` handler, which retries once and then
+   * reports it, so there's one path and one message; only other refusals (autoplay policy) are thrown. play()
+   * rejects with NotSupportedError only once the source has failed, by which time `error` has fired (and the
+   * retry may already have reset `a.error`); AbortError means a newer load replaced this one.
+   */
+  private async startAudio(a = this.audio!) {
+    try {
+      await a.play();
+    } catch (err) {
+      const name = (err as Error)?.name;
+      if (a.error || name === 'NotSupportedError' || name === 'AbortError') return;
+      throw err;
     }
   }
 
@@ -318,12 +442,15 @@ class Player {
     if (!track) throw new Error('This item has no playable audio.');
     const local = Math.max(0, time - track.startOffset);
     this.currentTime = time;
-    if (i !== this.trackIndex || !a.src) {
+    if (i !== this.trackIndex || !a.getAttribute('src')) {
       this.trackIndex = i;
       this.pendingSeek = local;
       a.src = track.src();
       a.dataset.track = String(i);
       a.load();
+    } else if (this.pendingSeek !== null) {
+      // Still loading, so it can't seek yet: this is where it should go once it can (the latest seek wins).
+      this.pendingSeek = local;
     } else {
       a.currentTime = local;
     }
@@ -333,15 +460,22 @@ class Player {
   private preloadNext() {
     const next = this.trackIndex + 1;
     if (next >= this.tracks.length || this.standbyTrack === next) return;
+    const failedAt = this.preloadFailed.get(next);
+    if (failedAt && Date.now() - failedAt < PRELOAD_RETRY_MS) return;
     const b = this.standby;
     this.standbyTrack = next;
-    b.src = this.tracks[next].src();
-    b.dataset.track = String(next);
-    b.load();
+    // The stream URL carries the token; make sure it's one that will still be good when the file is fetched.
+    void ensureFreshToken().then(() => {
+      if (this.standbyTrack !== next || this.standby !== b || !this.tracks[next]) return;
+      b.src = this.tracks[next].src();
+      b.dataset.track = String(next);
+      b.load();
+    });
   }
 
   async resume(): Promise<void> {
     if (!this.item) return;
+    // From the restored dock: play() starts at any position picked there.
     if (!this.ready) return this.play(this.item.id, this.episode?.id ?? null);
     const a = this.audio!;
     if (this.pausedAt && Date.now() - this.pausedAt > 30_000) await this.checkElsewhere();
@@ -351,7 +485,7 @@ class Player {
     this.pausedAt = 0;
     this.lastTick = Date.now();
     try {
-      await a.play();
+      await this.startAudio(a);
     } catch (err) {
       toast(`Playback was blocked. ${errorMessage(err)}`, { tone: 'error' });
     }
@@ -385,6 +519,7 @@ class Player {
     const was = this.currentTime;
     if (!this.ready) {
       this.currentTime = p.currentTime;
+      this.picked = null;
       return;
     }
     this.lastSentTime = p.currentTime;
@@ -397,9 +532,14 @@ class Player {
 
   pause() {
     if (!this.audio || this.status !== 'playing') return;
-    this.audio.pause();
     this.status = 'paused';
+    this.audio.pause();
+    this.settlePaused();
+  }
+
+  private settlePaused() {
     this.pausedAt = Date.now();
+    this.writeAhead(true);
     void this.sync(true);
   }
 
@@ -412,9 +552,13 @@ class Player {
     if (!this.item) return;
     time = Math.max(0, Math.min(time, (this.duration || Infinity) - 0.5));
     if (!this.ready) {
+      // The dock before playback: remember the spot for when play is pressed.
       this.currentTime = time;
+      this.picked = { itemId: this.item.id, episodeId: this.episode?.id ?? null, time };
       return;
     }
+    // Moving by hand: an end-of-chapter timer now means the chapter being moved to.
+    if (this.sleep.kind === 'chapter') this.sleep = { kind: 'chapter', chapterIndex: findChapter(this.chapters, time) };
     const wasPlaying = this.status === 'playing';
     await this.loadAt(time);
     if (wasPlaying && this.audio!.paused) await this.audio!.play().catch(() => {});
@@ -474,16 +618,16 @@ class Player {
     this.setSleep({ kind: 'chapter', chapterIndex: this.chapterIndex });
   }
 
-  /** Close the server session and clear the dock. */
-  async stop() {
+  sleepAtBookEnd() {
+    this.setSleep({ kind: 'book' });
+  }
+
+  /** Close the server session and stop. The dock keeps showing the item. */
+  async stop(opts: { keepSleep?: boolean } = {}) {
     const s = this.session;
     const item = this.item;
     const episodeId = this.episode?.id ?? null;
-    for (const a of this.elements) {
-      a.pause();
-      a.removeAttribute('src');
-      a.load();
-    }
+    this.silence();
     if (item && this.ready) {
       const payload = this.syncPayload();
       if (this.local) {
@@ -500,13 +644,30 @@ class Player {
       }
       session.patchProgress(item.id, episodeId, { currentTime: payload.currentTime, progress: payload.currentTime / (payload.duration || 1) });
     }
+    this.forgetPlayback();
+    if (!opts.keepSleep) this.setSleep({ kind: 'off' });
+  }
+
+  /** Stop both elements. Status goes first so their `pause` events aren't taken for a pause from outside. */
+  private silence() {
+    this.status = 'idle';
+    for (const a of this.elements) {
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+    }
+  }
+
+  private forgetPlayback() {
+    this.closeOrphan();
     this.session = null;
     this.local = null;
     this.tracks = [];
     this.trackIndex = -1;
     this.standbyTrack = -1;
+    this.pendingSeek = null;
+    this.buffering = false;
     this.status = 'idle';
-    this.setSleep({ kind: 'off' });
   }
 
   /** Save where we are before the app quits. Resolves within `timeoutMs` whatever the network does. */
@@ -519,11 +680,37 @@ class Player {
     await Promise.race([close.catch(() => {}), new Promise((r) => setTimeout(r, timeoutMs))]);
   }
 
+  /**
+   * The signed-in account is about to change: save and close under it, then forget everything that belonged to
+   * it, so nothing (not even the unload handler) writes the old account's progress under the new one's keys.
+   */
+  private async release() {
+    this.playGen++;
+    if (this.ready) await this.shutdown();
+    this.silence();
+    this.forgetPlayback();
+    this.picked = null;
+    this.item = null;
+    this.episode = null;
+    this.tint = null;
+    this.queue = [];
+    this.currentTime = 0;
+    this.duration = 0;
+    this.setSleep({ kind: 'off' });
+  }
+
+  private closeOrphan() {
+    if (!this.orphan) return;
+    // If the server is still unreachable this fails quietly; it closes the session itself when this device opens the next.
+    void abs.closeSession(this.orphan).catch(() => {});
+    this.orphan = null;
+  }
+
   private syncPayload(): abs.SyncPayload {
     return { currentTime: this.currentTime, timeListened: Math.round(this.listened), duration: this.duration };
   }
 
-  /** Persist the position locally between syncs, so a crash or force-quit can't lose it. */
+  /** Persist the position locally between syncs, so a crash or force-quit can't lose it (or the listening time). */
   private writeAhead(force = false) {
     if (!this.item || !this.session || this.local) return;
     if (!force && Date.now() - this.lastWriteAhead < WRITE_AHEAD_MS) return;
@@ -533,6 +720,8 @@ class Player {
       episodeId: this.episode?.id ?? null,
       currentTime: this.currentTime,
       duration: this.duration,
+      sessionId: this.session.id,
+      timeListened: Math.round(this.listened),
       updatedAt: Date.now()
     });
   }
@@ -548,53 +737,113 @@ class Player {
     outbox.putSession($state.snapshot(l) as abs.LocalSession);
   }
 
-  private async sync(force = false) {
+  private sync(force = false): Promise<void> {
     if (this.local) {
       if (force || Date.now() - this.lastSync >= SYNC_EVERY_MS) {
         this.lastSync = Date.now();
         this.recordLocal();
       }
-      return;
+      return Promise.resolve();
     }
     const s = this.session;
-    if (!s || this.syncing) return;
-    if (!force && Date.now() - this.lastSync < SYNC_EVERY_MS) return;
+    if (!s) return Promise.resolve();
+    if (this.syncing) {
+      // The one in flight carries an older position: send another as soon as it lands (e.g. pausing mid-sync).
+      if (!force) return this.syncing;
+      this.followUp ??= this.syncing.then(() => {
+        this.followUp = null;
+        return this.sync(true);
+      });
+      return this.followUp;
+    }
+    if (!force && Date.now() - this.lastSync < SYNC_EVERY_MS) return Promise.resolve();
     const payload = this.syncPayload();
     const listened = this.listened;
     const sentAt = Date.now();
+    const key = progressKey(s.libraryItemId, s.episodeId);
     this.lastSync = sentAt;
     this.syncing = abs
       .syncSession(s.id, payload)
       .then(() => {
         this.listened = Math.max(0, this.listened - listened);
         this.lastSentTime = payload.currentTime;
-        outbox.confirm(progressKey(s.libraryItemId, s.episodeId), sentAt);
+        outbox.confirm(key, sentAt);
+        // Written ahead while this was out: rewrite it without the listening time just delivered.
+        if (outbox.entries[key] && this.session?.id === s.id) this.writeAhead(true);
       })
       .catch(async (err) => {
         if (this.session?.id !== s.id) return;
-        if (err instanceof ApiError && err.status === 0) {
-          // Lost the server mid-listen: carry on and record locally from here.
-          outbox.confirm(progressKey(s.libraryItemId, s.episodeId));
+        if (isUnreachable(err)) {
+          // Lost the server mid-listen: carry on and record locally from here (unsynced listening included). The
+          // server session is closed, and a fresh one opened, when the connection comes back (see rejoin).
+          outbox.confirm(key);
+          this.orphan = s.id;
+          this.session = null;
           this.local = this.newLocalSession();
-          this.local.timeListening = 0;
           this.recordLocal();
           return;
         }
         // The server drops idle sessions; open a fresh one at the same spot.
         if (err instanceof ApiError && err.status === 404 && this.item) {
-          const fresh = await abs.startPlayback(this.item.id, this.episode?.id ?? null).catch(() => null);
-          if (fresh && this.session?.id === s.id) this.session = { ...fresh, currentTime: this.currentTime };
+          const itemId = this.item.id;
+          const episodeId = this.episode?.id ?? null;
+          const fresh = await abs.startPlayback(itemId, episodeId).catch(() => null);
+          if (!fresh) return;
+          if (this.session?.id === s.id && this.isCurrent(itemId, episodeId)) this.session = { ...fresh, currentTime: this.currentTime };
+          // Moved on to something else meanwhile: don't leave this one open.
+          else void abs.closeSession(fresh.id).catch(() => {});
         }
       })
       .finally(() => (this.syncing = null));
-    await this.syncing;
+    return this.syncing;
+  }
+
+  /**
+   * The server is back after we fell back to recording locally (offline start, or the connection dropped
+   * mid-listen): hand the local listening over, close the abandoned session and carry on in a fresh server one.
+   */
+  private rejoin() {
+    const local = this.local;
+    const item = this.item;
+    if (!local || !item || this.rejoining) return this.rejoining ?? undefined;
+    const episodeId = this.episode?.id ?? null;
+    this.rejoining = (async () => {
+      await outbox.flush();
+      if (this.orphan) {
+        const id = this.orphan;
+        this.orphan = null;
+        await abs.closeSession(id).catch(() => {});
+      }
+      await ensureFreshToken();
+      const fresh = await abs.startPlayback(item.id, episodeId).catch(() => null);
+      if (!fresh) return;
+      if (this.local !== local || !this.isCurrent(item.id, episodeId)) {
+        void abs.closeSession(fresh.id).catch(() => {});
+        return;
+      }
+      // Whatever was listened since the flush stays with the local session.
+      this.recordLocal();
+      this.local = null;
+      this.session = { ...fresh, currentTime: this.currentTime };
+      this.lastSentTime = -1;
+      void outbox.flush();
+      void this.sync(true);
+    })().finally(() => (this.rejoining = null));
+    return this.rejoining;
   }
 
   private tick() {
-    this.now = Date.now();
+    const now = Date.now();
+    const elapsed = now - this.now;
+    this.now = now;
+    if (this.sleep.kind === 'timer' && this.status !== 'playing') {
+      // A duration timer only runs down while something plays.
+      this.sleep = { ...this.sleep, endsAt: this.sleep.endsAt + elapsed };
+    }
     if (this.status !== 'playing') return;
-    if (this.lastTick) this.listened += Math.min((this.now - this.lastTick) / 1000, 2);
-    this.lastTick = this.now;
+    // Time spent waiting for data isn't listening.
+    if (this.lastTick && !this.buffering && !this.audio?.paused) this.listened += Math.min((now - this.lastTick) / 1000, 2);
+    this.lastTick = now;
 
     if (this.item) {
       session.patchProgress(this.item.id, this.episode?.id ?? null, {
@@ -621,41 +870,69 @@ class Player {
       } else if (left < 10) {
         a.volume = prefs.volume * (left / 10);
       }
-    } else if (sl.kind === 'chapter' && this.chapterIndex !== sl.chapterIndex) {
-      this.pause();
-      void this.seek(this.chapters[sl.chapterIndex + 1]?.start ?? this.currentTime);
-      this.setSleep({ kind: 'off' });
-      toast('Paused at the end of the chapter.');
+    } else {
+      this.checkChapterSleep();
     }
+  }
+
+  /**
+   * Pause once playback runs past the end of the chapter the timer is set for. Seeks re-target the timer, so only
+   * listening through a chapter end gets here. The last chapter ends with the book; onTrackEnded handles that.
+   */
+  private checkChapterSleep() {
+    const sl = this.sleep;
+    if (sl.kind !== 'chapter' || this.status !== 'playing') return;
+    const c = this.chapters[sl.chapterIndex];
+    if (!c || sl.chapterIndex >= this.chapters.length - 1 || this.currentTime < c.end) return;
+    this.pause();
+    this.setSleep({ kind: 'off' });
+    toast('Paused at the end of the chapter.');
   }
 
   private async onTrackEnded() {
     const next = this.trackIndex + 1;
-    if (next < this.tracks.length) {
-      const b = this.standby;
-      if (this.standbyTrack === next && b.readyState >= HTMLMediaElement.HAVE_METADATA) {
-        // Seamless: the next file is already buffered.
-        this.audio = b;
-        this.trackIndex = next;
-        this.standbyTrack = -1;
-        b.currentTime = 0;
-        b.playbackRate = this.rate;
-        b.volume = this.elements.find((e) => e !== b)!.volume;
-        this.currentTime = this.tracks[next].startOffset;
-        await b.play().catch(() => {});
-      } else {
-        await this.loadAt(this.tracks[next].startOffset);
-        await this.audio!.play().catch(() => {});
-      }
-      return;
-    }
+    if (next < this.tracks.length) return this.handOver(next);
     this.currentTime = this.duration;
     this.status = 'paused';
     await this.sync(true);
     const finished = this.item;
     if (finished) session.patchProgress(finished.id, this.episode?.id ?? null, { isFinished: true, progress: 1, finishedAt: Date.now() });
     toast(`Finished ${this.title}.`);
+    if (this.sleep.kind === 'chapter' || this.sleep.kind === 'book') {
+      // The timer was for this ending: stop here rather than start the next thing.
+      this.setSleep({ kind: 'off' });
+      return;
+    }
     await this.advance();
+  }
+
+  /** Move playback on to the next file of the same item. */
+  private async handOver(next: number) {
+    const b = this.standby;
+    if (this.standbyTrack === next && b.getAttribute('src')) {
+      // The next file is buffered (or on its way) in the standby element: switch to it rather than fetch it twice.
+      const buffered = b.readyState >= HTMLMediaElement.HAVE_METADATA;
+      const volume = this.audio!.volume;
+      this.audio = b;
+      this.trackIndex = next;
+      this.standbyTrack = -1;
+      this.pendingSeek = buffered ? null : 0;
+      if (buffered) b.currentTime = 0;
+      b.playbackRate = this.rate;
+      b.volume = volume;
+      this.currentTime = this.tracks[next].startOffset;
+      await this.startAudio(b).catch(() => {});
+      return;
+    }
+    // Not preloaded (or the preload failed): drop any half-loaded standby and load it here.
+    this.standbyTrack = -1;
+    if (b.getAttribute('src')) {
+      b.removeAttribute('src');
+      b.load();
+    }
+    await ensureFreshToken();
+    await this.loadAt(this.tracks[next].startOffset);
+    await this.startAudio().catch(() => {});
   }
 
   /** After finishing: play the head of Up Next, or carry on with the series or podcast if allowed. */
@@ -665,7 +942,7 @@ class Player {
       this.removeFromQueue(0);
       return this.play(head.itemId, head.episodeId);
     }
-    if (!prefs.autoContinue || this.sleep.kind !== 'off') return;
+    if (!prefs.autoContinue) return;
     const next = await this.findNext().catch(() => null);
     if (next) {
       toast(`Up next: ${next.title}.`);
@@ -767,8 +1044,9 @@ class Player {
     const wasPlaying = this.status === 'playing' || this.status === 'loading';
     await ensureFreshToken();
     this.trackIndex = -1;
+    this.pendingSeek = null;
     await this.loadAt(at);
-    if (wasPlaying) await this.audio!.play().catch(() => {});
+    if (wasPlaying) await this.startAudio().catch(() => {});
   }
 
   private setupMediaSession() {

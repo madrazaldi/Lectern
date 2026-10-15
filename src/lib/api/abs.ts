@@ -1,5 +1,5 @@
 import { APP_VERSION } from '$lib/native';
-import { request } from './client';
+import { LONG_TIMEOUT_MS as LONG, request } from './client';
 import type {
   Author,
   Bookmark,
@@ -25,12 +25,12 @@ export function encodeFilter(group: string, value: string) {
   return `${group}.${b64}`;
 }
 
-export const getMe = () => request<User>('/api/me');
+export const getMe = () => request<User>('/api/me', { timeout: LONG });
 
 export const getLibraries = () => request<{ libraries: Library[] }>('/api/libraries').then((r) => r.libraries.sort((a, b) => a.displayOrder - b.displayOrder));
 
 export const getPersonalized = (libraryId: string, limit = 12) =>
-  request<Shelf[]>(`/api/libraries/${libraryId}/personalized`, { query: { limit, include: 'rssfeed,numEpisodesIncomplete' } });
+  request<Shelf[]>(`/api/libraries/${libraryId}/personalized`, { timeout: LONG, query: { limit, include: 'rssfeed,numEpisodesIncomplete' } });
 
 export interface ItemsQuery {
   sort?: string;
@@ -44,6 +44,7 @@ export interface ItemsQuery {
 export const getLibraryItems = (libraryId: string, q: ItemsQuery = {}, signal?: AbortSignal) =>
   request<Paged<LibraryItem>>(`/api/libraries/${libraryId}/items`, {
     signal,
+    timeout: LONG,
     query: {
       sort: q.sort,
       desc: q.desc ? 1 : 0,
@@ -56,16 +57,18 @@ export const getLibraryItems = (libraryId: string, q: ItemsQuery = {}, signal?: 
     }
   });
 
-export const getFilterData = (libraryId: string) => request<FilterData>(`/api/libraries/${libraryId}/filterdata`);
+export const getFilterData = (libraryId: string) => request<FilterData>(`/api/libraries/${libraryId}/filterdata`, { timeout: LONG });
 
 export const getSeriesList = (libraryId: string, page = 0, sort = 'name', desc = false, limit = 60) =>
   request<Paged<Series>>(`/api/libraries/${libraryId}/series`, {
+    timeout: LONG,
     query: { page, limit, sort, desc: desc ? 1 : 0, minified: 1 }
   });
 
 export const getSeries = (seriesId: string) => request<Series>(`/api/series/${seriesId}`, { query: { include: 'progress' } });
 
-export const getAuthors = (libraryId: string) => request<{ authors: Author[] }>(`/api/libraries/${libraryId}/authors`).then((r) => r.authors);
+export const getAuthors = (libraryId: string) =>
+  request<{ authors: Author[] }>(`/api/libraries/${libraryId}/authors`, { timeout: LONG }).then((r) => r.authors);
 
 export const getAuthor = (authorId: string, libraryId?: string) =>
   request<Author>(`/api/authors/${authorId}`, { query: { include: 'items,series', library: libraryId } });
@@ -98,14 +101,14 @@ export const addToPlaylist = (id: string, entry: PlaylistEntry) =>
 export const removeFromPlaylist = (id: string, entry: PlaylistEntry) =>
   request<Playlist>(`/api/playlists/${id}/item/${entry.libraryItemId}${entry.episodeId ? `/${entry.episodeId}` : ''}`, { method: 'DELETE' });
 
-export const getItem = (id: string) => request<LibraryItem>(`/api/items/${id}`, { query: { expanded: 1, include: 'progress,rssfeed,authors' } });
+export const getItem = (id: string) => request<LibraryItem>(`/api/items/${id}`, { timeout: LONG, query: { expanded: 1, include: 'progress,rssfeed,authors' } });
 
 export const search = (libraryId: string, q: string, signal?: AbortSignal) =>
   request<SearchResults>(`/api/libraries/${libraryId}/search`, { query: { q, limit: 12 }, signal });
 
-export const getListeningStats = () => request<ListeningStats>('/api/me/listening-stats');
+export const getListeningStats = () => request<ListeningStats>('/api/me/listening-stats', { timeout: LONG });
 
-export const getItemsInProgress = () => request<{ libraryItems: LibraryItem[] }>('/api/me/items-in-progress').then((r) => r.libraryItems);
+export const getItemsInProgress = () => request<{ libraryItems: LibraryItem[] }>('/api/me/items-in-progress', { timeout: LONG }).then((r) => r.libraryItems);
 
 /** The server's copy of one item's progress, or null if it has none. */
 export const getProgress = (itemId: string, episodeId?: string | null, signal?: AbortSignal) =>

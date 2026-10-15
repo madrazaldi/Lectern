@@ -10,9 +10,17 @@ vi.mock('$lib/api/client', () => {
       super(message);
     }
   }
-  return { ApiError, scopedKey: (k: string) => `${k}.test` };
+  return {
+    ApiError,
+    scopedKey: (k: string) => `${k}.test`,
+    clockSkew: () => skew.value,
+    isUnreachable: (e: unknown) => e instanceof ApiError && e.status === 0,
+    isAuthLost: (e: unknown) => e instanceof ApiError && e.status === 401
+  };
 });
-vi.mock('$lib/api/abs', () => ({ getProgress: vi.fn(), updateProgress: vi.fn(), syncLocalSession: vi.fn() }));
+vi.mock('$lib/api/abs', () => ({ getProgress: vi.fn(), updateProgress: vi.fn(), syncLocalSession: vi.fn(), closeSession: vi.fn() }));
+
+const skew = vi.hoisted(() => ({ value: 0 }));
 
 const abs = await import('$lib/api/abs');
 const { ApiError } = await import('$lib/api/client');
@@ -21,6 +29,7 @@ const { outbox, progressKey } = await import('./outbox.svelte');
 const getProgress = vi.mocked(abs.getProgress);
 const updateProgress = vi.mocked(abs.updateProgress);
 const syncLocalSession = vi.mocked(abs.syncLocalSession);
+const closeSession = vi.mocked(abs.closeSession);
 
 function put(itemId: string, updatedAt: number, currentTime = 100) {
   outbox.putProgress({ itemId, episodeId: null, currentTime, duration: 1000, updatedAt });
@@ -34,7 +43,10 @@ beforeEach(() => {
   outbox.load();
   outbox.entries = {};
   outbox.busy = () => false;
+  outbox.prepare = () => {};
+  skew.value = 0;
   updateProgress.mockResolvedValue(undefined);
+  closeSession.mockResolvedValue(undefined);
   syncLocalSession.mockResolvedValue(undefined);
 });
 
@@ -105,5 +117,62 @@ describe('outbox', () => {
     outbox.entries = {};
     outbox.load();
     expect(Object.keys(outbox.entries).sort()).toEqual(['progress:a', 'session:s1']);
+  });
+
+  it('closes the written-ahead session to credit its listening time', async () => {
+    getProgress.mockResolvedValue({ lastUpdate: 1000, currentTime: 50 } as never);
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 321, duration: 1000, sessionId: 's1', timeListened: 42, updatedAt: 2000 });
+    await outbox.flush();
+    expect(closeSession).toHaveBeenCalledWith('s1', { currentTime: 321, timeListened: 42, duration: 1000 });
+    expect(updateProgress).not.toHaveBeenCalled();
+    expect(outbox.pending).toBe(0);
+  });
+
+  it('keeps the other device’s position when closing a session it has moved past', async () => {
+    getProgress.mockResolvedValue({ lastUpdate: 3000, currentTime: 900 } as never);
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 321, duration: 1000, sessionId: 's1', timeListened: 42, updatedAt: 2000 });
+    await outbox.flush();
+    expect(closeSession).toHaveBeenCalledWith('s1', { currentTime: 900, timeListened: 42, duration: 1000 });
+  });
+
+  it('falls back to a plain progress update when the server has forgotten the session', async () => {
+    getProgress.mockResolvedValue({ lastUpdate: 1000 } as never);
+    closeSession.mockRejectedValue(new ApiError(404, 'Not Found'));
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 321, duration: 1000, sessionId: 's1', timeListened: 42, updatedAt: 2000 });
+    await outbox.flush();
+    expect(updateProgress).toHaveBeenCalledWith('a', { currentTime: 321, duration: 1000, progress: 0.321 }, null);
+  });
+
+  it('does not let a later position write drop an unsent finished mark', async () => {
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 10, duration: 1000, isFinished: true, updatedAt: 1 });
+    outbox.putProgress({ itemId: 'a', episodeId: null, currentTime: 20, duration: 1000, sessionId: 's1', updatedAt: 2 });
+    getProgress.mockResolvedValue(null);
+    await outbox.flush();
+    expect(closeSession).not.toHaveBeenCalled();
+    expect(updateProgress).toHaveBeenCalledWith('a', { isFinished: true }, null);
+  });
+
+  it('compares timestamps on the server’s clock', async () => {
+    // Our clock runs 10 minutes behind the server's: a write at our 2000 happened at the server's 602000.
+    skew.value = 600_000;
+    getProgress.mockResolvedValue({ lastUpdate: 300_000 } as never);
+    put('a', 2000, 321);
+    await outbox.flush();
+    expect(updateProgress).toHaveBeenCalled();
+  });
+
+  it('asks the player to fold in local listening before sending', async () => {
+    const prepare = vi.fn(() => outbox.putSession(localSession('late')));
+    outbox.prepare = prepare;
+    await outbox.flush();
+    expect(prepare).toHaveBeenCalled();
+    expect(syncLocalSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'late' }));
+  });
+
+  it('keeps entries while the account needs to sign in again', async () => {
+    getProgress.mockRejectedValue(new ApiError(401, 'signed out'));
+    put('a', 1);
+    await outbox.flush();
+    expect(outbox.pending).toBe(1);
   });
 });

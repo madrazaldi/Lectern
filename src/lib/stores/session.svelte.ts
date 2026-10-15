@@ -1,11 +1,27 @@
 import * as abs from '$lib/api/abs';
-import { ApiError, getCredentials, logout, onReachabilityChange, onSessionExpired, scopedKey } from '$lib/api/client';
+import {
+  clockSkew,
+  getCredentials,
+  isAuthLost,
+  isUnreachable,
+  logout,
+  needsReauth,
+  onAccountChanged,
+  onAuthLost,
+  onReachabilityChange,
+  ping,
+  reauthenticate,
+  scopedKey,
+  serverNow
+} from '$lib/api/client';
 import type { Bookmark, Library, MediaProgress, User } from '$lib/api/types';
 import { outbox } from './outbox.svelte';
 
 const LIB_KEY = 'lectern.library';
 const CACHE_KEY = 'lectern.cache';
 const RETRY_MS = 20_000;
+/** Re-reading the user on window focus is a convenience; live updates cover the rest. */
+const FOCUS_REFRESH_MS = 60_000;
 
 interface Cached {
   user: User;
@@ -18,6 +34,8 @@ class Session {
   addingAccount = $state(false);
   /** Whether the last request reached the server. False means we're running from cache and downloads. */
   online = $state(true);
+  /** The server stopped accepting this account's sign-in. Everything stays as it is until the user signs in again. */
+  needsReauth = $state(false);
   user = $state<User | null>(null);
   libraries = $state<Library[]>([]);
   libraryId = $state<string | null>(null);
@@ -31,15 +49,33 @@ class Session {
 
   /** Called when the server reports progress that may have come from another device. */
   onRemoteProgress: ((p: MediaProgress, from?: string) => void) | null = null;
-  /** Called when the connection comes back after being offline. */
-  onReconnect: (() => void) | null = null;
 
+  private reconnectListeners = new Set<() => unknown>();
   private retry: ReturnType<typeof setInterval> | null = null;
+  private reconnecting: Promise<void> | null = null;
+  private refreshing: Promise<void> | null = null;
+  private lastRefresh = 0;
 
   constructor() {
-    onSessionExpired(() => void this.signOut());
+    onAuthLost((id) => {
+      if (getCredentials()?.id === id) this.needsReauth = true;
+    });
     onReachabilityChange((online) => this.setOnline(online));
-    window.addEventListener('online', () => void this.refreshUser(true));
+    onAccountChanged(() => {
+      // Per-account state from here on belongs to the new account (or nobody).
+      this.needsReauth = needsReauth();
+      this.lastRefresh = 0;
+      this.stopProbing();
+      this.online = true;
+      outbox.load();
+    });
+    window.addEventListener('online', () => void this.probe());
+  }
+
+  /** Called (and awaited) after the connection comes back, once waiting progress has gone out and the user is re-read. */
+  onReconnect(fn: () => unknown) {
+    this.reconnectListeners.add(fn);
+    return () => void this.reconnectListeners.delete(fn);
   }
 
   async load() {
@@ -48,12 +84,14 @@ class Session {
       return;
     }
     this.libraryId = localStorage.getItem(scopedKey(LIB_KEY));
+    this.needsReauth = needsReauth();
     outbox.load();
     this.status = this.user ? 'ready' : 'loading';
     this.error = null;
     try {
       const [user, libraries] = await Promise.all([abs.getMe(), abs.getLibraries()]);
       this.applyUser(user);
+      this.lastRefresh = Date.now();
       this.libraries = libraries;
       if (!libraries.some((l) => l.id === this.libraryId)) this.selectLibrary(libraries[0]?.id ?? null);
       this.status = 'ready';
@@ -61,13 +99,13 @@ class Session {
       void outbox.flush();
     } catch (err) {
       if (!getCredentials()) return;
-      const cached = err instanceof ApiError && err.status === 0 ? this.readCache() : null;
+      // Start from the last good copy so downloads stay playable: offline, or signed out by the server (the banner asks to sign in again).
+      const cached = isUnreachable(err) || isAuthLost(err) ? this.readCache() : null;
       if (cached) {
-        // Start offline from the last good copy so downloads stay playable.
         this.applyUser(cached.user);
         this.libraries = cached.libraries;
         this.status = 'ready';
-        this.setOnline(false);
+        if (isUnreachable(err)) this.setOnline(false);
       } else {
         this.error = (err as Error).message;
       }
@@ -78,14 +116,48 @@ class Session {
     if (online === this.online) return;
     this.online = online;
     if (online) {
-      if (this.retry) clearInterval(this.retry);
-      this.retry = null;
-      void outbox.flush();
-      void this.refreshUser();
-      this.onReconnect?.();
+      this.stopProbing();
+      void this.reconnect();
     } else {
-      this.retry ??= setInterval(() => void this.refreshUser(true), RETRY_MS);
+      this.retry ??= setInterval(() => void this.probe(), RETRY_MS);
     }
+  }
+
+  private stopProbing() {
+    if (this.retry) clearInterval(this.retry);
+    this.retry = null;
+  }
+
+  /** While offline: is the server back? An unauthenticated ping rather than a full /api/me. */
+  private async probe() {
+    if (this.online || !getCredentials()) return;
+    if (await ping()) this.setOnline(true);
+  }
+
+  /**
+   * Back online. Send what waited first, so the fresh copy of the user already includes it (rather than the
+   * server's older progress overwriting what was listened to offline); then let the player and live feed catch up.
+   */
+  private reconnect() {
+    this.reconnecting ??= (async () => {
+      await outbox.flush().catch(() => {});
+      await this.refreshUser(0);
+      await Promise.allSettled([...this.reconnectListeners].map(async (fn) => fn()));
+    })().finally(() => (this.reconnecting = null));
+    return this.reconnecting;
+  }
+
+  /** Sign the current account in again after the server stopped accepting it. */
+  async reauthenticate(secret: string) {
+    const account = getCredentials();
+    if (!account) return;
+    await reauthenticate(account.id, secret);
+    this.needsReauth = false;
+    this.error = null;
+    if (this.status !== 'ready') return this.load();
+    this.online = true;
+    this.stopProbing();
+    await this.reconnect();
   }
 
   private saveCache(user: User, libraries: Library[]) {
@@ -105,23 +177,32 @@ class Session {
     }
   }
 
-  /** Re-read progress and bookmarks, e.g. after the window regains focus. `probe` also runs while offline. */
-  async refreshUser(probe = false) {
-    if (this.status !== 'ready' || (!this.online && !probe)) return;
-    try {
-      const user = await abs.getMe();
-      this.applyUser(user, true);
-      if (this.libraries.length) this.saveCache(user, this.libraries);
-    } catch {
-      // Offline or server restarting — keep what we have.
-    }
+  /**
+   * Re-read progress and bookmarks, unless that was done within `maxAgeMs` (window focus uses the default; pass 0
+   * to force). Does nothing while offline: the probe brings us back.
+   */
+  refreshUser(maxAgeMs = FOCUS_REFRESH_MS): Promise<void> {
+    if (this.status !== 'ready' || !this.online) return Promise.resolve();
+    if (this.refreshing) return this.refreshing;
+    if (Date.now() - this.lastRefresh < maxAgeMs) return Promise.resolve();
+    this.refreshing = (async () => {
+      try {
+        const user = await abs.getMe();
+        this.lastRefresh = Date.now();
+        this.applyUser(user, true);
+        if (this.libraries.length) this.saveCache(user, this.libraries);
+      } catch {
+        // Offline or server restarting — keep what we have.
+      }
+    })().finally(() => (this.refreshing = null));
+    return this.refreshing;
   }
 
   private applyUser(user: User, notify = false) {
     const before = this.progress;
     this.user = user;
     const map: Record<string, MediaProgress> = {};
-    for (const p of user.mediaProgress) map[keyFor(p.libraryItemId, p.episodeId)] = p;
+    for (const p of user.mediaProgress) map[keyFor(p.libraryItemId, p.episodeId)] = withPending(p);
     this.progress = map;
     this.bookmarks = user.bookmarks ?? [];
     if (notify && this.onRemoteProgress) {
@@ -150,6 +231,7 @@ class Session {
   /** Optimistically patch local progress so the UI keeps up with playback between server round-trips. */
   patchProgress(itemId: string, episodeId: string | null, patch: Partial<MediaProgress>) {
     const key = keyFor(itemId, episodeId);
+    const now = serverNow();
     const base: MediaProgress = this.progress[key] ?? {
       id: key,
       libraryItemId: itemId,
@@ -159,11 +241,11 @@ class Session {
       currentTime: 0,
       isFinished: false,
       hideFromContinueListening: false,
-      startedAt: Date.now(),
+      startedAt: now,
       finishedAt: null,
-      lastUpdate: Date.now()
+      lastUpdate: now
     };
-    this.progress[key] = { ...base, ...patch, lastUpdate: Date.now() };
+    this.progress[key] = { ...base, ...patch, lastUpdate: now };
   }
 
   async setFinished(itemId: string, episodeId: string | null, isFinished: boolean) {
@@ -171,13 +253,13 @@ class Session {
     this.patchProgress(itemId, episodeId, {
       isFinished,
       progress: isFinished ? 1 : 0,
-      ...(isFinished ? { finishedAt: Date.now() } : { currentTime: 0 })
+      ...(isFinished ? { finishedAt: serverNow() } : { currentTime: 0 })
     });
     try {
       await abs.updateProgress(itemId, isFinished ? { isFinished } : { isFinished, progress: 0, currentTime: 0 }, episodeId);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 0) {
-        // Offline: keep the change and send it later.
+      if (isUnreachable(err) || isAuthLost(err)) {
+        // Offline (or waiting to sign in again): keep the change and send it later.
         const p = this.progressFor(itemId, episodeId)!;
         outbox.putProgress({ itemId, episodeId, currentTime: p.currentTime, duration: p.duration, isFinished, updatedAt: Date.now() });
         return;
@@ -207,7 +289,10 @@ class Session {
     this.bookmarks = this.bookmarks.filter((x) => !(x.libraryItemId === itemId && x.time === time));
   }
 
-  /** Sign the current account out. If another account is saved, the app restarts into it. */
+  /**
+   * Sign the current account out. The player stops and saves under it first (see `beforeAccountChange`). If
+   * another account is saved, the app restarts into it.
+   */
   async signOut() {
     const next = await logout().catch(() => getCredentials());
     if (next) {
@@ -218,8 +303,27 @@ class Session {
     this.libraries = [];
     this.progress = {};
     this.bookmarks = [];
+    this.needsReauth = false;
     this.status = 'signed-out';
   }
+}
+
+/** Overlay progress that's still waiting in the outbox (listened offline) on the server's older copy. */
+function withPending(p: MediaProgress): MediaProgress {
+  const pending = outbox.pendingFor(p.libraryItemId, p.episodeId ?? null);
+  if (!pending) return p;
+  const lastUpdate = pending.updatedAt + clockSkew();
+  if (lastUpdate <= p.lastUpdate) return p;
+  const duration = pending.duration || p.duration;
+  const isFinished = pending.isFinished ?? p.isFinished;
+  return {
+    ...p,
+    currentTime: pending.currentTime,
+    duration,
+    progress: isFinished ? 1 : duration ? Math.min(1, pending.currentTime / duration) : p.progress,
+    isFinished,
+    lastUpdate
+  };
 }
 
 function keyFor(itemId: string, episodeId?: string | null) {
