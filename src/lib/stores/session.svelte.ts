@@ -149,9 +149,14 @@ class Session {
 
   /** Sign the current account in again after the server stopped accepting it. */
   async reauthenticate(secret: string) {
+    return this.reauthenticateWith((id) => reauthenticate(id, secret));
+  }
+
+  /** The same, with another way of signing in again (single sign-on through the browser). */
+  async reauthenticateWith(signIn: (accountId: string) => Promise<unknown>) {
     const account = getCredentials();
     if (!account) return;
-    await reauthenticate(account.id, secret);
+    await signIn(account.id);
     this.needsReauth = false;
     this.error = null;
     if (this.status !== 'ready') return this.load();
