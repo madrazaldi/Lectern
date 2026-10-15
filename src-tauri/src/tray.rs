@@ -6,7 +6,7 @@ use tauri::{
 
 use crate::{
     app_state::focus_main_window,
-    menu::{Controls, NowPlaying, sleep_submenu},
+    menu::{Controls, NowPlaying, mini_item, sleep_submenu},
 };
 
 const TOOLTIP: &str = "Lectern";
@@ -43,12 +43,13 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let prev_chapter = disabled("prev-chapter", "Previous Chapter")?;
     let next_chapter = disabled("next-chapter", "Next Chapter")?;
     let sleep = sleep_submenu(app)?;
+    let mini = mini_item(app, None)?;
     let show = MenuItem::with_id(app, "show", "Show Lectern", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Lectern", true, None::<&str>)?;
 
     let sep = || PredefinedMenuItem::separator(app);
     let (sep1, sep2, sep3) = (sep()?, sep()?, sep()?);
-    let items: [&dyn IsMenuItem<Wry>; 13] = [
+    let items: [&dyn IsMenuItem<Wry>; 14] = [
         &title,
         &subtitle,
         &sep1,
@@ -60,6 +61,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         &sep2,
         &sleep,
         &sep3,
+        &mini,
         &show,
         &quit,
     ];
@@ -83,7 +85,8 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // macOS menu bar icons are monochrome templates that adapt to light/dark bars; elsewhere use the app icon.
     #[cfg(target_os = "macos")]
     {
-        let template = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
+        let template =
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
         builder = builder.icon(template).icon_as_template(true);
     }
     #[cfg(not(target_os = "macos"))]

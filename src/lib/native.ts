@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 
 /** True inside the Tauri shell; false when the UI is opened in a plain browser tab via `vite dev`. */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -42,3 +43,8 @@ export const setNowPlaying = (state: NowPlayingState) => call<void>('set_now_pla
 export const setCloseBehavior = (hide: boolean) => call<void>('set_close_behavior', { hide });
 export const quitNow = () => call<void>('quit_now');
 export const showMainWindow = () => call<void>('show_main_window');
+
+/** This webview's window, or null in a plain browser (where there is no window to move or resize). */
+export const appWindow = (): Window | null => (inTauri ? getCurrentWindow() : null);
+/** Relabel the "Mini Player" items in the app and tray menus. */
+export const setMiniMenu = (mini: boolean) => call<void>('set_mini_menu', { mini });

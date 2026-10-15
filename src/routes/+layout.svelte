@@ -5,19 +5,20 @@
   import '../app.css';
 
   import { CloudOff, LoaderCircle } from '@lucide/svelte';
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
   import { initCredentials } from '$lib/api/client';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
   import Dialogs from '$lib/components/Dialogs.svelte';
   import Login from '$lib/components/Login.svelte';
+  import MiniPlayer from '$lib/components/MiniPlayer.svelte';
   import NowPlaying from '$lib/components/NowPlaying.svelte';
   import PlayerDock from '$lib/components/PlayerDock.svelte';
   import ReauthBanner from '$lib/components/ReauthBanner.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toasts from '$lib/components/Toasts.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
-  import { inTauri, on, quitNow, setCloseBehavior, showMainWindow } from '$lib/native';
+  import { inTauri, on, quitNow, setCloseBehavior, setMiniMenu, showMainWindow } from '$lib/native';
   import { downloads } from '$lib/stores/downloads.svelte';
   import { live } from '$lib/stores/live.svelte';
   import { outbox } from '$lib/stores/outbox.svelte';
@@ -27,18 +28,24 @@
   import { contextMenu } from '$lib/util/contextMenu.svelte';
   import { dialogs } from '$lib/util/dialogs.svelte';
   import { restoreScroll } from '$lib/util/dom';
+  import { mini } from '$lib/util/miniMode';
   import { bookmarkHere, nudgeRate, nudgeVolume, toggleMute } from '$lib/util/play';
   import { isMacPlatform, matchShortcut, navAllowed } from '$lib/util/shortcuts';
 
   let { children } = $props();
   let main = $state<HTMLElement>();
   const scrollPositions = new Map<string, number>();
+  let cancelRestore: (() => void) | undefined;
   const mac = isMacPlatform();
   const where = $derived({ books: session.library?.mediaType !== 'podcast', desktop: inTauri });
   // Now Playing is modal: everything behind it is inert.
-  const modal = $derived(player.expanded && !!player.item);
+  const modal = $derived(player.expanded && !!player.item && !prefs.miniMode);
+  /** Actions that need the full window: pages, search, Now Playing, the shortcut list. */
+  const FULL_WINDOW = new Set(['search', 'back', 'forward', 'help', 'now-playing']);
 
   onMount(() => {
+    // Left as the mini player last time: the window opens full size, so shrink it straight away.
+    void mini.restore();
     void initCredentials().then(() => session.load());
 
     const unlisten = [
@@ -65,6 +72,42 @@
     void setCloseBehavior(prefs.keepPlayingWhenClosed).catch(() => {});
   });
 
+  $effect(() => {
+    void setMiniMenu(prefs.miniMode).catch(() => {});
+  });
+
+  // Signing in, and the "can't reach your server" screen, need the full window.
+  $effect(() => {
+    if (prefs.miniMode && (session.status === 'signed-out' || session.addingAccount || (session.status === 'loading' && session.error))) void mini.exit();
+  });
+
+  // Going small: close what the mini player can't show, so it isn't waiting (and holding the keyboard) on the way back.
+  let scrollBeforeMini: number | null = null;
+  $effect.pre(() => {
+    if (!prefs.miniMode) return;
+    untrack(() => {
+      // Runs before the shell is taken down, while the page still has its scroll position.
+      scrollBeforeMini = main?.scrollTop ?? 0;
+      player.expanded = false;
+      contextMenu.close(false);
+      dialogs.shortcuts = false;
+      dialogs.playlist = null;
+    });
+  });
+
+  // Back to the full window: same place on the page, and focus on the button that makes it small again.
+  $effect(() => {
+    if (prefs.miniMode || !main || scrollBeforeMini === null) return;
+    const el = main;
+    const top = scrollBeforeMini;
+    scrollBeforeMini = null;
+    untrack(() => {
+      cancelRestore?.();
+      cancelRestore = restoreScroll(el, top);
+      document.querySelector<HTMLElement>('[data-mini-toggle]')?.focus();
+    });
+  });
+
   // Let the playing cover tint the whole interface.
   $effect(() => {
     const root = document.documentElement.style;
@@ -77,8 +120,6 @@
       root.removeProperty('--s');
     }
   });
-
-  let cancelRestore: (() => void) | undefined;
 
   beforeNavigate(({ from }) => {
     cancelRestore?.();
@@ -97,6 +138,7 @@
   function navigate(href: string) {
     // The native Go menu offers Series, Authors and Collections in podcast libraries too.
     if (!navAllowed(href, where)) return;
+    if (prefs.miniMode) return void mini.exit().then(() => navigate(href));
     player.expanded = false;
     void goto(href);
   }
@@ -104,6 +146,12 @@
   /** Actions from the app menu, the menu bar (tray) icon and the keyboard. */
   function perform(action: string, from: 'menu' | 'key') {
     if (session.status !== 'ready') return;
+    if (action === 'mini-player') return void mini.toggle();
+    if (prefs.miniMode && FULL_WINDOW.has(action))
+      return void mini
+        .exit()
+        .then(tick)
+        .then(() => perform(action, from));
     if (action.startsWith('nav:')) return navigate(action.slice(4));
     switch (action) {
       case 'search':
@@ -210,6 +258,8 @@
       </div>
     {/if}
   </div>
+{:else if prefs.miniMode}
+  <MiniPlayer />
 {:else}
   <div class="shell" class:has-dock={!!player.item} inert={modal}>
     <Sidebar />
@@ -239,7 +289,7 @@
   <Dialogs />
 {/if}
 
-{#if session.status !== 'signed-out' && !session.addingAccount}<ReauthBanner />{/if}
+{#if session.status !== 'signed-out' && !session.addingAccount && !prefs.miniMode}<ReauthBanner />{/if}
 <Toasts />
 
 <style>

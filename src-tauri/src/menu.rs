@@ -1,6 +1,8 @@
+use std::sync::Mutex;
+
 use serde::Deserialize;
 use tauri::{
-    AppHandle, Emitter, Manager, Wry,
+    AppHandle, Emitter, Manager, State, Wry,
     menu::{IsMenuItem, MenuEvent, MenuItem, Submenu},
 };
 
@@ -10,6 +12,27 @@ use crate::{
 };
 
 pub const SLEEP_TITLE: &str = "Sleep Timer";
+const MINI_ENTER: &str = "Mini Player";
+const MINI_EXIT: &str = "Exit Mini Player";
+
+/// The "Mini Player" items in the app menu and the tray, relabelled when the window changes mode.
+#[derive(Default)]
+pub struct MiniItems(Mutex<Vec<MenuItem<Wry>>>);
+
+pub fn mini_item(app: &AppHandle, accelerator: Option<&str>) -> tauri::Result<MenuItem<Wry>> {
+    let item = MenuItem::with_id(app, "mini-player", MINI_ENTER, true, accelerator)?;
+    if let Some(items) = app.try_state::<MiniItems>() {
+        items.0.lock().unwrap().push(item.clone());
+    }
+    Ok(item)
+}
+
+#[tauri::command]
+pub fn set_mini_menu(items: State<'_, MiniItems>, mini: bool) {
+    for item in items.0.lock().unwrap().iter() {
+        let _ = item.set_text(if mini { MINI_EXIT } else { MINI_ENTER });
+    }
+}
 
 /// Items whose text/enabled state follows playback.
 pub struct Controls {
@@ -67,7 +90,7 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
         "quit" => request_quit(app),
         "show" => focus_main_window(app),
         _ if is_action(id) => {
-            if id.starts_with("nav:") || id == "search" || id == "now-playing" {
+            if id.starts_with("nav:") || matches!(id, "search" | "now-playing" | "mini-player") {
                 focus_main_window(app);
             }
             let _ = app.emit("menu-action", id.to_string());
@@ -90,6 +113,7 @@ fn is_action(id: &str) -> bool {
                 | "speed-down"
                 | "add-bookmark"
                 | "now-playing"
+                | "mini-player"
                 | "search"
                 | "back"
                 | "forward"
@@ -164,6 +188,7 @@ pub fn build_macos_menu(app: &AppHandle) -> tauri::Result<()> {
         true,
         &[
             &item("now-playing", "Now Playing", Some("CmdOrCtrl+Shift+F"))?,
+            &mini_item(app, Some("CmdOrCtrl+Shift+M"))?,
             &item("search", "Search", Some("CmdOrCtrl+F"))?,
             &sep()?,
             &PredefinedMenuItem::fullscreen(app, None)?,
