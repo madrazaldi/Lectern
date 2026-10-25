@@ -24,7 +24,7 @@
 
   const item = $derived(player.item);
   const subtitle = $derived(player.episode ? player.author : player.chapters.length > 1 && player.chapter ? player.chapter.title : player.author);
-  const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (player.rate || 1));
+  const remaining = $derived(Math.max(0, player.track.end - player.currentTime) / (player.rate || 1));
   const shortcut = shortcutKeys('mini-player');
 
   let dragTime = $state<number | null>(null);
@@ -32,7 +32,8 @@
   let seeking = $state(false);
   let seekTimer: ReturnType<typeof setTimeout> | undefined;
   const shown = $derived(dragTime ?? player.currentTime);
-  const filled = $derived(player.duration ? Math.min(100, (shown / player.duration) * 100) : 0);
+  const span = $derived(player.track.end - player.track.start);
+  const filled = $derived(span > 0 ? Math.min(100, Math.max(0, ((shown - player.track.start) / span) * 100)) : 0);
   // As in the dock's scrubber: whole minutes only, so a screen reader isn't re-reading the position every second.
   const spoken = $derived(seeking ? player.currentTime : Math.floor(player.currentTime / 60) * 60);
 
@@ -58,8 +59,8 @@
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') to = t - (e.shiftKey ? 60 : prefs.skipBack);
     else if (e.key === 'PageDown') to = chapters[player.chapterIndex + 1]?.start ?? null;
     else if (e.key === 'PageUp') to = chapters[Math.max(0, player.chapterIndex - 1)]?.start ?? null;
-    else if (e.key === 'Home') to = 0;
-    else if (e.key === 'End') to = player.duration - 1;
+    else if (e.key === 'Home') to = player.track.start;
+    else if (e.key === 'End') to = player.track.end - 1;
     if (to === null) return;
     e.preventDefault();
     seekTo(to);
@@ -141,14 +142,16 @@
     <input
       class="scrub"
       type="range"
-      min="0"
-      max={Math.max(1, Math.round(player.duration))}
+      min={Math.round(player.track.start)}
+      max={Math.max(Math.round(player.track.start) + 1, Math.round(player.track.end))}
       step="1"
       value={Math.round(shown)}
       disabled={!player.duration}
       style:--filled="{filled}%"
       aria-label="Position"
-      aria-valuetext="{clock(spoken)} of {clock(player.duration)}{player.chapter && player.chapters.length > 1 ? `, ${player.chapter.title}` : ''}"
+      aria-valuetext="{clock(Math.max(0, spoken - player.track.start))} of {clock(span)}{player.chapter && player.chapters.length > 1
+        ? `, ${player.chapter.title}`
+        : ''}"
       oninput={(e) => (dragTime = Number(e.currentTarget.value))}
       onchange={(e) => {
         void player.seek(Number(e.currentTarget.value));

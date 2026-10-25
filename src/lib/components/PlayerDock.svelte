@@ -14,7 +14,8 @@
   import VolumeControl from './VolumeControl.svelte';
 
   const item = $derived(player.item!);
-  const remaining = $derived(Math.max(0, player.duration - player.currentTime) / (player.rate || 1));
+  const elapsed = $derived(Math.max(0, player.currentTime - player.track.start));
+  const remaining = $derived(Math.max(0, player.track.end - player.currentTime) / (player.rate || 1));
   const marks = $derived(player.episode ? [] : session.bookmarksFor(item.id));
   const subtitle = $derived(player.episode ? player.author : player.chapters.length > 1 && player.chapter ? player.chapter.title : player.author);
   const miniShortcut = shortcutKeys('mini-player');
@@ -57,12 +58,13 @@
       </button>
     </div>
     <div class="scrub">
-      <span class="t num">{clock(player.currentTime)}</span>
+      <span class="t num">{clock(elapsed)}</span>
       <ChapterShelf
         chapters={player.chapters}
         time={player.currentTime}
         duration={player.duration}
         bookmarks={marks}
+        range={player.track.chapter ? player.track : undefined}
         onseek={(t) => player.seek(t)}
         disabled={!player.duration}
       />

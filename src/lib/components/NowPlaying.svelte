@@ -97,13 +97,14 @@
           time={player.currentTime}
           duration={player.duration}
           bookmarks={marks}
+          range={player.track.chapter ? player.track : undefined}
           onseek={(t) => player.seek(t)}
           disabled={!player.duration}
         />
         <div class="times num">
-          <span>{clock(player.currentTime)}</span>
-          <span>{duration(remaining, { short: true })} left at {player.rate}×</span>
-          <span>{clock(player.duration)}</span>
+          <span>{clock(Math.max(0, player.currentTime - player.track.start))}</span>
+          <span>{duration(remaining, { short: true })} left{player.track.chapter ? ' in book' : ''} at {player.rate}×</span>
+          <span>{clock(player.track.end - player.track.start)}</span>
         </div>
       </div>
 

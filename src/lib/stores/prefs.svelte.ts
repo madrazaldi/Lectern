@@ -31,6 +31,8 @@ export interface Prefs {
   itemRates: Record<string, number>;
   /** When something finishes and Up Next is empty, carry on with the next book in the series or the next episode. */
   autoContinue: boolean;
+  /** The player's scrubber and times cover the current chapter instead of the whole title. */
+  chapterTrack: boolean;
   /** Closing the window hides it and playback carries on from the menu bar. */
   keepPlayingWhenClosed: boolean;
   /** The window is the compact mini player (and comes back that way on the next launch). */
@@ -60,6 +62,7 @@ const defaults: Prefs = {
   perItemSpeed: true,
   itemRates: {},
   autoContinue: true,
+  chapterTrack: false,
   keepPlayingWhenClosed: true,
   miniMode: false,
   miniPinned: true,

@@ -7,6 +7,7 @@
   /**
    * The scrubber. Each chapter is a book spine on a shelf, as wide as the chapter is long;
    * finished chapters are gilt, the current one is pulled slightly forward and fills as you listen.
+   * With a `range` (usually the current chapter) the shelf holds just that span, as a single spine.
    */
   interface Props {
     chapters: Chapter[];
@@ -16,8 +17,9 @@
     size?: 'dock' | 'full';
     bookmarks?: { time: number; title: string }[];
     disabled?: boolean;
+    range?: { start: number; end: number };
   }
-  let { chapters, time, duration, onseek, size = 'dock', bookmarks = [], disabled = false }: Props = $props();
+  let { chapters, time, duration, onseek, size = 'dock', bookmarks = [], disabled = false, range }: Props = $props();
 
   let shelf: HTMLDivElement;
   let rects = $state<{ left: number; width: number }[]>([]);
@@ -30,13 +32,13 @@
 
   const shown = $derived(dragTime ?? time);
   const current = $derived(findChapter(chapters, shown));
-  const gap = $derived(chapters.length > 120 ? 1 : chapters.length > 50 ? 2 : size === 'full' ? 3 : 2);
-
-  // Deterministic "books of different heights" — a gentle rhythm, never random per render.
-  function heightFor(i: number) {
-    const x = Math.sin(i * 12.9898 + 4.1414) * 43758.5453;
-    return 0.66 + (x - Math.floor(x)) * 0.34;
-  }
+  /** What's drawn: a spine per chapter, or one for the range. Chapter titles still come from `chapters`. */
+  const spines = $derived<Chapter[]>(range ? [{ id: -1, start: range.start, end: range.end, title: '' }] : chapters);
+  const spineNow = $derived(range ? 0 : current);
+  const lo = $derived(range?.start ?? 0);
+  const hi = $derived(range?.end ?? duration);
+  const shownMarks = $derived(range ? bookmarks.filter((b) => b.time >= lo && b.time <= hi) : bookmarks);
+  const gap = $derived(spines.length > 120 ? 1 : spines.length > 50 ? 2 : size === 'full' ? 3 : 2);
 
   function measure() {
     if (!shelf) return;
@@ -49,7 +51,7 @@
   }
 
   $effect(() => {
-    void chapters;
+    void spines;
     void gap;
     measure();
     const ro = new ResizeObserver(measure);
@@ -58,24 +60,24 @@
   });
 
   function timeAtX(x: number) {
-    if (!rects.length || !chapters.length) return 0;
-    if (x <= rects[0].left) return chapters[0].start;
+    if (!rects.length || !spines.length) return 0;
+    if (x <= rects[0].left) return spines[0].start;
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       const nextLeft = rects[i + 1]?.left ?? Infinity;
       if (x < nextLeft) {
         const frac = Math.min(1, Math.max(0, (x - r.left) / r.width));
-        const c = chapters[i];
+        const c = spines[i];
         return c.start + frac * (c.end - c.start);
       }
     }
-    return duration;
+    return hi;
   }
 
   function xAtTime(t: number) {
-    if (!rects.length || !chapters.length) return 0;
-    const i = findChapter(chapters, t);
-    const c = chapters[i];
+    if (!rects.length || !spines.length) return 0;
+    const i = findChapter(spines, t);
+    const c = spines[i];
     const r = rects[i];
     if (!r) return 0;
     const frac = c.end > c.start ? (t - c.start) / (c.end - c.start) : 0;
@@ -113,8 +115,8 @@
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') t = time - (e.shiftKey ? 60 : prefs.skipBack);
     else if (e.key === 'PageDown') t = chapters[current + 1]?.start ?? null;
     else if (e.key === 'PageUp') t = chapters[Math.max(0, current - 1)]?.start ?? null;
-    else if (e.key === 'Home') t = 0;
-    else if (e.key === 'End') t = duration - 1;
+    else if (e.key === 'Home') t = lo;
+    else if (e.key === 'End') t = hi - 1;
     if (t !== null) {
       e.preventDefault();
       e.stopPropagation();
@@ -147,9 +149,9 @@
   tabindex={disabled ? -1 : 0}
   aria-label="Position"
   aria-valuemin={0}
-  aria-valuemax={Math.round(duration)}
-  aria-valuenow={Math.round(spoken)}
-  aria-valuetext="{clock(spoken)} of {clock(duration)}{spokenChapter && chapters.length > 1 ? `, ${spokenChapter.title}` : ''}"
+  aria-valuemax={Math.round(hi - lo)}
+  aria-valuenow={Math.round(Math.max(0, spoken - lo))}
+  aria-valuetext="{clock(Math.max(0, spoken - lo))} of {clock(hi - lo)}{spokenChapter && chapters.length > 1 ? `, ${spokenChapter.title}` : ''}"
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}
@@ -157,20 +159,13 @@
   onpointerleave={() => (hoverX = null)}
   onkeydown={onKey}
 >
-  {#each chapters as c, i (c.id ?? i)}
+  {#each spines as c, i (c.id ?? i)}
     {@const len = Math.max(c.end - c.start, 0.001)}
-    {@const fill = i < current ? 1 : i > current ? 0 : Math.min(1, Math.max(0, (shown - c.start) / len))}
-    <div
-      class="spine"
-      class:read={i < current}
-      class:now={i === current}
-      style:flex-grow={len}
-      style:height="{(chapters.length === 1 ? 1 : heightFor(i)) * 100}%"
-      style:--fill="{fill * 100}%"
-    ></div>
+    {@const fill = i < spineNow ? 1 : i > spineNow ? 0 : Math.min(1, Math.max(0, (shown - c.start) / len))}
+    <div class="spine" class:read={i < spineNow} class:now={i === spineNow} style:flex-grow={len} style:--fill="{fill * 100}%"></div>
   {/each}
 
-  {#each bookmarks as b (b.time)}
+  {#each shownMarks as b (b.time)}
     {#if rects.length}
       <span class="mark" style:left="{xAtTime(b.time)}px" title={b.title}></span>
     {/if}
@@ -221,6 +216,7 @@
     position: relative;
     flex-basis: 0;
     min-width: 1px;
+    height: 100%;
     border-radius: 1.5px 1.5px 0 0;
     background: linear-gradient(90deg, var(--accent) var(--fill), var(--spine-empty) var(--fill));
     transition:

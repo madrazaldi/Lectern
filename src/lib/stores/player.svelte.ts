@@ -95,6 +95,12 @@ class Player {
   });
   chapterIndex = $derived(findChapter(this.chapters, this.currentTime));
   chapter = $derived<Chapter | null>(this.chapters[this.chapterIndex] ?? null);
+  /** The span the scrubbers cover: the current chapter with `prefs.chapterTrack`, otherwise the whole title. */
+  track = $derived<{ start: number; end: number; chapter: boolean }>(
+    prefs.chapterTrack && this.chapters.length > 1 && this.chapter
+      ? { start: this.chapter.start, end: this.chapter.end, chapter: true }
+      : { start: 0, end: this.duration, chapter: false }
+  );
   isPlaying = $derived(this.status === 'playing');
   /** Speed for what's loaded: its own if one was chosen, otherwise the default. */
   rate = $derived(this.item ? this.rateFor(this.item.id) : prefs.playbackRate);

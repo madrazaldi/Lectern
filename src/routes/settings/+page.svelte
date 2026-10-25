@@ -179,6 +179,13 @@
       </div>
       <input type="checkbox" class="switch" bind:checked={prefs.autoContinue} />
     </label>
+    <label class="row">
+      <div class="label">
+        <span>Scrub within the current chapter</span>
+        <small>The player's progress bar and times cover the chapter you're in instead of the whole book.</small>
+      </div>
+      <input type="checkbox" class="switch" bind:checked={prefs.chapterTrack} />
+    </label>
     {#if inTauri}
       <label class="row">
         <div class="label">
