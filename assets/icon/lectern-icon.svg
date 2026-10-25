@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Lectern app icon: an open book giving off sound. macOS grid: 824x824
+       tile at (100,100), r=185. Rasterize with build.sh (AppKit's SVG
+       renderer: no filters, so the shadow is stacked translucent rects). -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2e2938"/>
+      <stop offset="1" stop-color="#16141c"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="400" x2="0" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f6f0e6"/>
+      <stop offset="1" stop-color="#ddd3c3"/>
+    </linearGradient>
+    <linearGradient id="page-r" x1="0" y1="400" x2="0" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e9e2d6"/>
+      <stop offset="1" stop-color="#cdc2b1"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="200" x2="0" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f2c47a"/>
+      <stop offset="1" stop-color="#d9913c"/>
+    </linearGradient>
+  </defs>
+  <g fill="#000" fill-opacity="0.022">
+    <rect x="98" y="110" width="828" height="828" rx="187"/>
+    <rect x="95.6" y="107.6" width="832.8" height="832.8" rx="189.4"/>
+    <rect x="93.2" y="105.2" width="837.6" height="837.6" rx="191.8"/>
+    <rect x="90.8" y="102.8" width="842.4" height="842.4" rx="194.2"/>
+    <rect x="88.4" y="100.4" width="847.2" height="847.2" rx="196.6"/>
+    <rect x="86" y="98" width="852" height="852" rx="199"/>
+    <rect x="83.6" y="95.6" width="856.8" height="856.8" rx="201.4"/>
+    <rect x="81.2" y="93.2" width="861.6" height="861.6" rx="203.8"/>
+    <rect x="78.8" y="90.8" width="866.4" height="866.4" rx="206.2"/>
+    <rect x="76.4" y="88.4" width="871.2" height="871.2" rx="208.6"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <!-- sound -->
+  <g fill="none" stroke="url(#amber)" stroke-width="40" stroke-linecap="round">
+    <path d="M444 382A96 96 0 0 1 580 382"/>
+    <path d="M382 320A184 184 0 0 1 642 320"/>
+  </g>
+  <!-- pages -->
+  <path d="M502 470C430 426 330 418 250 440V734C330 714 430 722 502 766Z" fill="url(#page)"/>
+  <path d="M522 470C594 426 694 418 774 440V734C694 714 594 722 522 766Z" fill="url(#page-r)"/>
+  <!-- bookmark ribbon -->
+  <path d="M560 452V806L596 778L632 806V438Q596 440 560 452Z" fill="url(#amber)"/>
+</svg>
