@@ -1,6 +1,10 @@
 build
 .svelte-kit
 node_modules
-src-tauri
+
 bun.lock
 *.config.js
+dist
+artifacts
+.hutch
+.cottontail-tmp

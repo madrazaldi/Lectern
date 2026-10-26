@@ -30,5 +30,5 @@ export default ts.config(
       'svelte/prefer-svelte-reactivity': 'off'
     }
   },
-  { ignores: ['build/', '.svelte-kit/', 'src-tauri/', 'node_modules/'] }
+  { ignores: ['build/', 'dist/', 'artifacts/', '.hutch/', '.cottontail-tmp/', '.svelte-kit/', 'node_modules/'] }
 );

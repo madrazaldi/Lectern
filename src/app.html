@@ -5,6 +5,13 @@
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Lectern</title>
+    <!-- The window opens before the page has painted: keep it from flashing white. -->
+    <style>
+      html {
+        background: #1b1922;
+      }
+    </style>
+    <script src="%sveltekit.assets%/boot.js"></script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

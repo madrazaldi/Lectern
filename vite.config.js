@@ -1,16 +1,14 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
-import process from "node:process";
 import { readFileSync } from "node:fs";
-const host = process.env.TAURI_DEV_HOST;
 const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 const FORWARDED = ["authorization", "content-type", "x-refresh-token", "x-return-tokens"];
 
 /**
  * Dev-only relay so the UI can also be opened in an ordinary browser tab, where
- * Audiobookshelf's CORS handling would otherwise block API calls. Tauri builds use
- * the native HTTP plugin and never touch this.
+ * Audiobookshelf's CORS handling would otherwise block API calls. The desktop app
+ * sends its requests through the Bun process and never touches this.
  */
 /** @returns {import("vite").Plugin} */
 function absDevProxy() {
@@ -53,27 +51,15 @@ function absDevProxy() {
 export default defineConfig(() => ({
   plugins: [sveltekit(), absDevProxy()],
   define: { __APP_VERSION__: JSON.stringify(version) },
-  test: { include: ["src/**/*.test.ts"] },
+  // src/bun holds the main process's tests, which run under `bun test`.
+  test: { include: ["src/**/*.test.ts"], exclude: ["src/bun/**", "node_modules/**"] },
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
+  // Keep Vite from obscuring build errors.
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // `electrobun dev` looks for the dev server on this port; fail rather than pick another.
   server: {
     port: 1420,
     strictPort: true,
-    host: host || "127.0.0.1",
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
-    },
+    host: "127.0.0.1",
   },
 }));
