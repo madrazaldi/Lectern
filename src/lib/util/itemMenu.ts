@@ -5,7 +5,7 @@ import * as abs from '$lib/api/abs';
 import type { LibraryItem, SeriesRef } from '$lib/api/types';
 import { isBook, isPodcast } from '$lib/api/types';
 import { hasAudio } from '$lib/components/reader/ebook';
-import { inTauri } from '$lib/native';
+import { inApp } from '$lib/native';
 import { downloads } from '$lib/stores/downloads.svelte';
 import { player } from '$lib/stores/player.svelte';
 import { session } from '$lib/stores/session.svelte';
@@ -88,7 +88,7 @@ registerItemAction({
   order: 1,
   build: (t) => {
     const p = playable(t);
-    if (!p || !inTauri || !session.canDownload) return null;
+    if (!p || !inApp || !session.canDownload) return null;
     const record = downloads.get(p.item.id, p.episodeId);
     if (record?.status === 'downloading') return { label: 'Cancel download', icon: CircleX, run: () => downloads.cancel(record.key) };
     if (record?.status === 'ready')

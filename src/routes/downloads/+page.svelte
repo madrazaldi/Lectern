@@ -3,7 +3,7 @@
   import Cover from '$lib/components/Cover.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Progress from '$lib/components/Progress.svelte';
-  import { inTauri } from '$lib/native';
+  import { inApp } from '$lib/native';
   import { downloads, type DownloadRecord } from '$lib/stores/downloads.svelte';
   import { player } from '$lib/stores/player.svelte';
   import { session } from '$lib/stores/session.svelte';
@@ -108,7 +108,7 @@
     {/if}
   </header>
 
-  {#if !inTauri}
+  {#if !inApp}
     <EmptyState title="Downloads need the desktop app">
       <p>Offline listening stores files on your computer, which a browser tab can't do.</p>
     </EmptyState>
@@ -189,7 +189,7 @@
     </ul>
   {/if}
 
-  {#if inTauri && otherGroups.length}
+  {#if inApp && otherGroups.length}
     <section class="others">
       <h2 class="serif">From other accounts</h2>
       <p class="faint small">These were downloaded while signed in to another account. They can't be played from this one, but they still take up space.</p>

@@ -2,7 +2,7 @@
   import { LogOut, Plus } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { getCredentials, listAccounts, probeServer, scopedKey, switchAccount, type ServerStatus } from '$lib/api/client';
-  import { APP_VERSION, inTauri } from '$lib/native';
+  import { APP_VERSION, inApp } from '$lib/native';
   import { downloads } from '$lib/stores/downloads.svelte';
   import { player } from '$lib/stores/player.svelte';
   import { prefs, type Theme } from '$lib/stores/prefs.svelte';
@@ -186,7 +186,7 @@
       </div>
       <input type="checkbox" class="switch" bind:checked={prefs.chapterTrack} />
     </label>
-    {#if inTauri}
+    {#if inApp}
       <label class="row">
         <div class="label">
           <span>Keep playing when the window is closed</span>
@@ -197,7 +197,7 @@
     {/if}
   </section>
 
-  {#if inTauri}
+  {#if inApp}
     <section>
       <h2 class="serif">Downloads</h2>
       <div class="row">

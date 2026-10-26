@@ -54,7 +54,7 @@
   <div class="backdrop" style:background-image="url({coverUrl(item.id, 200, item.updatedAt)})" transition:fade={motion({ duration: 400 })}></div>
   <div class="veil"></div>
 
-  <header data-tauri-drag-region>
+  <header data-drag-region>
     <button bind:this={closeButton} class="icon-btn close" onclick={() => (player.expanded = false)} aria-label="Close now playing" title="Close (Esc)">
       <ChevronDown size={22} />
     </button>

@@ -7,7 +7,7 @@ const http = vi.hoisted(() => ({ handler: null as null | ((url: URL, init: Reque
 const keychain = vi.hoisted(() => ({ store: new Map<string, string>(), failWrites: false }));
 const toast = vi.hoisted(() => vi.fn());
 
-vi.mock('@tauri-apps/plugin-http', () => ({
+vi.mock('$lib/ipc', () => ({
   fetch: (input: string, init: RequestInit = {}) => {
     const url = new URL(input);
     http.calls.push(`${init.method ?? 'GET'} ${url.pathname}`);
@@ -21,7 +21,7 @@ vi.mock('@tauri-apps/plugin-http', () => ({
 }));
 
 vi.mock('$lib/native', () => ({
-  inTauri: true,
+  inApp: true,
   secrets: {
     get: async (key: string) => keychain.store.get(key) ?? null,
     set: async (key: string, value: string) => {
@@ -542,6 +542,39 @@ describe('single sign-on', () => {
     const err = await client.beginOpenIdLogin(SERVER).then(() => null, caught);
     expect(err).not.toBeNull();
     expect(err!.message).toMatch(/lectern:\/\/oauth.*Allowed Mobile Redirect URIs/);
+  });
+
+  describe('where links can come back', () => {
+    const setPlatform = (platform: string | undefined) => {
+      (window as unknown as { __lectern?: unknown }).__lectern = platform ? { files: '', platform } : undefined;
+    };
+    afterEach(() => setPlatform(undefined));
+
+    it('on macOS offers the custom schemes, then the loopback address', () => {
+      setPlatform('darwin');
+      expect(client.openIdRedirectUris()).toEqual(['audiobookshelf://oauth', 'lectern://oauth', 'http://127.0.0.1:47017/oauth']);
+    });
+
+    it('on Windows and Linux only the loopback address can reach the app', async () => {
+      setPlatform('win32');
+      expect(client.openIdRedirectUris()).toEqual(['http://127.0.0.1:47017/oauth']);
+      ssoServer({ allowed: ['http://127.0.0.1:47017/oauth'] });
+      const pending = await client.beginOpenIdLogin(SERVER);
+      expect(pending.redirectUri).toBe('http://127.0.0.1:47017/oauth');
+    });
+
+    it('reads the code from a loopback link, and ignores other pages on that machine', () => {
+      const pending = { redirectUri: 'http://127.0.0.1:47017/oauth', state: 'st' };
+      expect(client.parseOpenIdCallback(pending, 'http://127.0.0.1:47017/oauth?code=c1&state=st')).toBe('c1');
+      expect(client.isOpenIdCallback(pending, 'http://127.0.0.1:8080/oauth?code=c1&state=st')).toBe(false);
+    });
+
+    it('asks the admin for the address that applies', async () => {
+      setPlatform('linux');
+      ssoServer({ allowed: [] });
+      const err = await client.beginOpenIdLogin(SERVER).then(() => null, caught);
+      expect(err!.message).toMatch(/add http:\/\/127\.0\.0\.1:47017\/oauth under Settings/);
+    });
   });
 
   it('only opens web pages in the browser', async () => {

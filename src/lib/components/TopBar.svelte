@@ -61,7 +61,7 @@
   });
 </script>
 
-<div class="bar" data-tauri-drag-region>
+<div class="bar" data-drag-region>
   <div class="hist">
     <button class="icon-btn" onclick={() => history.back()} aria-label="Back"><ChevronLeft size={20} /></button>
     <button class="icon-btn" onclick={() => history.forward()} aria-label="Forward"><ChevronRight size={20} /></button>

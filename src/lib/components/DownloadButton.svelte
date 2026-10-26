@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ArrowDownToLine, CircleCheck, RotateCw, Trash2, X } from '@lucide/svelte';
-  import { inTauri } from '$lib/native';
+  import { inApp } from '$lib/native';
   import { downloadKey, downloads } from '$lib/stores/downloads.svelte';
   import { session } from '$lib/stores/session.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -35,7 +35,7 @@
   }
 </script>
 
-{#if inTauri && session.canDownload}
+{#if inApp && session.canDownload}
   {#if status === 'downloading'}
     <button
       class={compact ? 'icon-btn' : 'btn btn-quiet btn-lg'}

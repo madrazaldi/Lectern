@@ -1,6 +1,6 @@
 export type Theme = 'system' | 'dark' | 'light';
 
-/** A window's place on screen, in physical pixels. */
+/** A window's place on screen, in points (origin at the top-left of the primary display). */
 export interface WindowBounds {
   x: number;
   y: number;
@@ -41,7 +41,7 @@ export interface Prefs {
   miniPinned: boolean;
   /** The full window's bounds from before it became the mini player, to return to. */
   miniRestore: WindowBounds | null;
-  /** Where the mini player was last put (physical pixels). */
+  /** Where the mini player was last put (points). */
   miniPosition: { x: number; y: number } | null;
 }
 

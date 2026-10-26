@@ -19,7 +19,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Toasts from '$lib/components/Toasts.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
-  import { inTauri, on, quitNow, setCloseBehavior, setMiniMenu, showMainWindow } from '$lib/native';
+  import { inApp, on, quitNow, setCloseBehavior, setMiniMenu, showMainWindow } from '$lib/native';
   import { downloads } from '$lib/stores/downloads.svelte';
   import { live } from '$lib/stores/live.svelte';
   import { outbox } from '$lib/stores/outbox.svelte';
@@ -38,7 +38,7 @@
   const scrollPositions = new Map<string, number>();
   let cancelRestore: (() => void) | undefined;
   const mac = isMacPlatform();
-  const where = $derived({ books: session.library?.mediaType !== 'podcast', desktop: inTauri });
+  const where = $derived({ books: session.library?.mediaType !== 'podcast', desktop: inApp });
   // Now Playing is modal: everything behind it is inert.
   const modal = $derived(player.expanded && !!player.item && !prefs.miniMode);
   /** Actions that need the full window: pages, search, Now Playing, the shortcut list. */
@@ -50,9 +50,9 @@
     void initCredentials().then(() => session.load());
 
     const unlisten = [
-      on<string>('menu-action', (action) => perform(action, 'menu')),
+      on('menu-action', (action) => perform(action, 'menu')),
       // Quitting from the menu, tray or last window: save our place first, then let the app go.
-      on<null>('app-quit-requested', async () => {
+      on('app-quit-requested', async () => {
         await player.shutdown().catch(() => {});
         await quitNow();
       })
@@ -228,7 +228,7 @@
       }
       return;
     }
-    const shortcut = matchShortcut(e, { ...where, expanded: modal, nativeMenu: inTauri && mac });
+    const shortcut = matchShortcut(e, { ...where, expanded: modal, nativeMenu: inApp && mac });
     if (!shortcut) return;
     const mod = e.metaKey || e.ctrlKey;
     if (!mod && target.closest(OWNS_KEYS)) return;
@@ -244,7 +244,7 @@
 {#if session.status === 'signed-out' || session.addingAccount}
   <Login />
 {:else if session.status === 'loading'}
-  <div class="splash" data-tauri-drag-region>
+  <div class="splash" data-drag-region>
     {#if session.error}
       <div class="splash-error">
         <h1 class="serif">Can't reach your server</h1>
@@ -274,7 +274,7 @@
           <span>
             You're offline. Downloaded titles still play, and your progress{outbox.pending ? ` (${outbox.pending} waiting)` : ''} syncs when the server is back.
           </span>
-          {#if inTauri}<a href="/downloads">Downloads</a>{/if}
+          {#if inApp}<a href="/downloads">Downloads</a>{/if}
         </div>
       {/if}
       {#key session.library?.id}

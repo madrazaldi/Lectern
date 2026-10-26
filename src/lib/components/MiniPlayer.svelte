@@ -2,7 +2,7 @@
   import { KeyRound, LoaderCircle, Maximize2, Pause, Pin, PinOff, Play, X } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { appWindow, inTauri } from '$lib/native';
+  import { appWindow, inApp } from '$lib/native';
   import { player } from '$lib/stores/player.svelte';
   import { prefs } from '$lib/stores/prefs.svelte';
   import { ssoReauth } from '$lib/stores/reauth.svelte';
@@ -92,7 +92,7 @@
     <button class="icon-btn" bind:this={expandButton} onclick={() => mini.exit()} aria-label="Full window" title="Full window ({shortcut})">
       <Maximize2 size={15} />
     </button>
-    {#if inTauri}
+    {#if inApp}
       <!-- There is no title bar in the mini player; closing behaves like closing the full window. -->
       <button class="icon-btn" onclick={() => appWindow()?.close()} aria-label="Close window" title="Close window">
         <X size={16} />
@@ -101,7 +101,7 @@
   </div>
 {/snippet}
 
-<section class="mini" class:preview={!inTauri} aria-label="Mini player" data-tauri-drag-region="deep" in:fade={motion({ duration: 160 })}>
+<section class="mini" class:preview={!inApp} aria-label="Mini player" data-drag-region="deep" in:fade={motion({ duration: 160 })}>
   {#if item}
     <div class="art">
       <Cover itemId={item.id} title={player.title} updatedAt={item.updatedAt} width={160} aspect={1} hasCover={!!item.media.coverPath} eager />

@@ -1,8 +1,8 @@
 import { ApiError, beginOpenIdLogin, completeOpenIdLogin, isOpenIdCallback, reauthenticateWithOpenId, type OpenIdPending } from '$lib/api/client';
-import { inTauri, onDeepLink, openExternal, showMainWindow } from '$lib/native';
+import { inApp, onDeepLink, openExternal, showMainWindow } from '$lib/native';
 
 /** Single sign-on needs the desktop app: only it can receive the deep link the browser comes back with. */
-export const ssoAvailable = inTauri;
+export const ssoAvailable = inApp;
 
 /** How long to wait for the browser. Generous, since signing in at the provider can involve a second factor. */
 export const SSO_TIMEOUT_MS = 5 * 60_000;

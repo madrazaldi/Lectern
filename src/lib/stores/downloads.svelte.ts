@@ -3,7 +3,7 @@ import * as abs from '$lib/api/abs';
 import { authHeaders, coverUrl, ensureFreshToken, getCredentials, listAccounts, onAccountChanged, serverUrl, type Account } from '$lib/api/client';
 import type { AudioFile, Chapter, LibraryItem, PodcastMetadata } from '$lib/api/types';
 import { isBook, isPodcast } from '$lib/api/types';
-import { call, inTauri, on } from '$lib/native';
+import { call, inApp, on } from '$lib/native';
 import { bytes } from '$lib/util/format';
 import { errorMessage, toast } from './toast.svelte';
 
@@ -209,10 +209,10 @@ class Downloads {
 
   private async read(first: boolean) {
     this.accountId = getCredentials()?.id ?? null;
-    if (!inTauri) return;
+    if (!inApp) return;
     if (!this.listening) {
       this.listening = true;
-      void on<Progress>('download-progress', (p) => this.onProgress(p));
+      void on('download-progress', (p) => this.onProgress(p));
     }
     // Folders a quit or crash left without any record of what they hold.
     if (first) await call<number>('prune_downloads').catch(() => 0);
@@ -291,7 +291,7 @@ class Downloads {
   /** Starts or resumes a download. Calling it again while it runs does nothing. */
   start(itemId: string, episodeId: string | null = null): Promise<void> {
     const account = getCredentials();
-    if (!inTauri || !account) return Promise.resolve();
+    if (!inApp || !account) return Promise.resolve();
     this.accountId = account.id;
     const key = downloadKey(itemId, episodeId);
     const dir = downloadDir(account.id, key);
