@@ -5,6 +5,7 @@ import { mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, ex
 import { open, readdir, readFile, rename, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { emit } from './events';
+import { tlsOptions } from './http';
 import { downloadsRoot } from './paths';
 
 const PROGRESS_INTERVAL_MS = 200;
@@ -312,7 +313,7 @@ export async function fetchPart(req: FetchRequest, signal: AbortSignal, progress
     arm();
     let response: Response;
     try {
-      response = await fetch(req.url, { headers, signal: ctrl.signal, redirect: 'follow' });
+      response = await fetch(req.url, { headers, signal: ctrl.signal, redirect: 'follow', ...tlsOptions() });
     } catch (err) {
       return guard(err);
     }

@@ -20,4 +20,10 @@ export function dataDir(env: Record<string, string | undefined> = process.env, p
   }
 }
 
+/** Tauri's `app_config_dir`: the data directory, except on Linux, where it is `~/.config/com.lectern.app`. */
+export function configDir(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'linux' || env.LECTERN_DATA_DIR) return dataDir(env, platform);
+  return join(env.XDG_CONFIG_HOME || join(env.HOME ?? homedir(), '.config'), IDENTIFIER);
+}
+
 export const downloadsRoot = () => join(dataDir(), 'downloads');

@@ -13,7 +13,7 @@ import { setEventSink } from './events';
 import { setLinkHandler } from './deeplink';
 import { startFileServer } from './files';
 import { downloadsRoot } from './paths';
-import { attachWindow, handleLinks, initialPlacement, installMenus, isMac, TRAFFIC_LIGHTS } from './shell';
+import { attachWindow, handleLinks, initialPlacement, installMenus, isMac, openExternal, TRAFFIC_LIGHTS } from './shell';
 import type { PushEvents, Reply } from '../shared/rpc';
 
 type LecternRPC = {
@@ -81,6 +81,19 @@ setLinkHandler((link) => handleLinks([link]));
 Electrobun.events.on('open-url', (e: unknown) => {
   const url = (e as { data?: { url?: string } }).data?.url;
   if (url) handleLinks([url]);
+});
+
+// Electrobun cancels new windows (the `target="_blank"` links in book and author descriptions) and only reports them;
+// send them to the browser.
+Electrobun.events.on('new-window-open', (e: unknown) => {
+  const detail = (e as { data?: { detail?: string | { url?: string } } }).data?.detail;
+  const url = typeof detail === 'string' ? detail : detail?.url;
+  if (!url) return;
+  try {
+    openExternal(url);
+  } catch (err) {
+    console.warn(`not opening ${url}: ${err}`);
+  }
 });
 
 console.log('Lectern started');

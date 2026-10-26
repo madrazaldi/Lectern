@@ -207,6 +207,12 @@ export function handleLinks(links: string[]) {
   emit('deep-link', links);
 }
 
+/** Opens a web, mail or phone link in the system's handler; anything else is refused. */
+export function openExternal(url: string) {
+  if (!/^(https?:|mailto:|tel:)/i.test(url)) throw new Error('Refusing to open this link');
+  if (!Utils.openExternal(url)) throw new Error('Could not open the link');
+}
+
 // ---- Commands ----
 
 const clampFrame = (v: unknown) => Math.max(0, Math.round(Number(v)));
@@ -225,10 +231,7 @@ register({
     menus.mini = !!a.mini;
     refreshMenus();
   },
-  open_external: (a: { url: string }) => {
-    if (!/^(https?:|mailto:|tel:)/i.test(a.url)) throw new Error('Refusing to open this link');
-    if (!Utils.openExternal(a.url)) throw new Error('Could not open the link');
-  },
+  open_external: (a: { url: string }) => openExternal(a.url),
 
   // The window, in points with a top-left origin.
   window_state: () => {
@@ -246,6 +249,10 @@ register({
   },
   window_set_min_size: (a: { size: { width: number; height: number } | null }) => {
     minSize = a.size ? { width: clampFrame(a.size.width), height: clampFrame(a.size.height) } : null;
+    // The resize event only enforces it from the next resize; a window already smaller grows now.
+    if (!minSize || !win) return;
+    const { width, height } = win.getFrame();
+    if (width < minSize.width || height < minSize.height) win.setSize(Math.max(width, minSize.width), Math.max(height, minSize.height));
   },
   window_set_size: (a: { width: number; height: number }) => {
     const size = { width: clampFrame(a.width), height: clampFrame(a.height) };

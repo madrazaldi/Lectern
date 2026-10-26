@@ -3,7 +3,7 @@
 // physical pixels; the windows here work in points, so the display's scale factor converts between the two.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { dataDir } from './paths';
+import { configDir } from './paths';
 
 export interface Frame {
   x: number;
@@ -41,7 +41,8 @@ export interface Restored {
   fullscreen: boolean;
 }
 
-export const stateFilePath = () => join(dataDir(), '.window-state.json');
+// Where Tauri's window-state plugin kept it.
+export const stateFilePath = () => join(configDir(), '.window-state.json');
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 

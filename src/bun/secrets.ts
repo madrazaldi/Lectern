@@ -54,17 +54,66 @@ async function windowsLegacy(service: string, name: string, op: 'read' | 'delete
   }
 }
 
-/** keyring-rs: a Secret Service item keyed by `service` and `username`. Needs `secret-tool`. */
-async function linuxLegacy(service: string, name: string): Promise<string | null> {
-  if (!Bun.which('secret-tool')) return null;
-  const p = Bun.spawn(['secret-tool', 'lookup', 'service', service, 'username', name], { stdout: 'pipe', stderr: 'ignore' });
-  const out = await new Response(p.stdout).text();
-  return (await p.exited) === 0 && out !== '' ? out : null;
+async function openLibsecret() {
+  const { dlopen } = await import('bun:ffi');
+  return {
+    glib: dlopen('libglib-2.0.so.0', {
+      g_hash_table_new: { args: ['ptr', 'ptr'], returns: 'ptr' },
+      g_hash_table_insert: { args: ['ptr', 'ptr', 'ptr'], returns: 'i32' },
+      g_hash_table_unref: { args: ['ptr'], returns: 'void' },
+      g_error_free: { args: ['ptr'], returns: 'void' }
+    }).symbols,
+    secret: dlopen('libsecret-1.so.0', {
+      secret_password_lookupv_sync: { args: ['ptr', 'ptr', 'ptr', 'ptr'], returns: 'ptr' },
+      secret_password_clearv_sync: { args: ['ptr', 'ptr', 'ptr', 'ptr'], returns: 'i32' },
+      secret_password_free: { args: ['ptr'], returns: 'void' }
+    }).symbols
+  };
 }
 
-async function linuxLegacyDelete(service: string, name: string): Promise<void> {
-  if (!Bun.which('secret-tool')) return;
-  await Bun.spawn(['secret-tool', 'clear', 'service', service, 'username', name], { stdout: 'ignore', stderr: 'ignore' }).exited;
+// Opened once and never closed: libsecret registers GLib types that can't be registered again after a reload.
+let libsecret: ReturnType<typeof openLibsecret> | undefined;
+
+/**
+ * keyring-rs: a Secret Service item keyed by `service` and `username`. Read through libsecret, which Bun.secrets needs
+ * on Linux anyway, so no extra tool has to be installed.
+ */
+async function linuxLegacy(service: string, name: string, op: 'read' | 'delete'): Promise<string | null> {
+  const { CString, ptr, read } = await import('bun:ffi');
+  const { glib, secret } = await (libsecret ??= openLibsecret());
+  const cstr = (v: string) => Buffer.from(`${v}\0`, 'utf8');
+  // The table only borrows these, so they have to outlive it.
+  const keep = [cstr('service'), cstr(service), cstr('username'), cstr(name)];
+  const attrs = glib.g_hash_table_new(null, null);
+  try {
+    glib.g_hash_table_insert(attrs, ptr(keep[0]), ptr(keep[1]));
+    glib.g_hash_table_insert(attrs, ptr(keep[2]), ptr(keep[3]));
+    const error = new BigUint64Array(1);
+    const check = () => {
+      const err = Number(error[0]) as Pointer;
+      if (!err) return;
+      // GError: domain and code (4 bytes each), then the message.
+      const message = new CString(read.ptr(err, 8) as Pointer).toString();
+      glib.g_error_free(err);
+      throw new Error(message);
+    };
+    // No schema: match on the attributes alone, as keyring-rs's own lookups do.
+    if (op === 'delete') {
+      secret.secret_password_clearv_sync(null, attrs, null, ptr(error));
+      check();
+      return null;
+    }
+    const found = secret.secret_password_lookupv_sync(null, attrs, null, ptr(error));
+    check();
+    if (!found) return null;
+    try {
+      return new CString(found).toString();
+    } finally {
+      secret.secret_password_free(found);
+    }
+  } finally {
+    glib.g_hash_table_unref(attrs);
+  }
 }
 
 export const bunKeychain: Keychain = {
@@ -75,7 +124,7 @@ export const bunKeychain: Keychain = {
     process.platform === 'win32'
       ? { get: (service, name) => windowsLegacy(service, name, 'read'), delete: async (service, name) => void (await windowsLegacy(service, name, 'delete')) }
       : process.platform === 'linux'
-        ? { get: linuxLegacy, delete: linuxLegacyDelete }
+        ? { get: (service, name) => linuxLegacy(service, name, 'read'), delete: async (service, name) => void (await linuxLegacy(service, name, 'delete')) }
         : undefined
 };
 

@@ -19,6 +19,12 @@ function trustedRoots(): string[] {
   return trusted;
 }
 
+/** `fetch` options that trust the system's roots as well; downloads use them too. */
+export function tlsOptions(): { tls?: { ca: string[] } } {
+  const roots = trustedRoots();
+  return roots.length ? { tls: { ca: roots } } : {};
+}
+
 /** Headers that describe the wire encoding, not the body the page receives. */
 const WIRE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive']);
 
@@ -33,14 +39,13 @@ export async function httpFetch(req: HttpRequest): Promise<HttpResponse> {
   const ctrl = new AbortController();
   inflight.set(req.id, ctrl);
   try {
-    const roots = trustedRoots();
     const res = await fetch(req.url, {
       method: req.method,
       headers: req.headers,
       body: req.body === undefined ? undefined : Buffer.from(req.body, 'base64'),
       redirect: req.redirect ?? 'follow',
       signal: ctrl.signal,
-      ...(roots.length ? { tls: { ca: roots } } : {})
+      ...tlsOptions()
     });
     const body = Buffer.from(await res.arrayBuffer()).toString('base64');
     const headers: [string, string][] = [];
