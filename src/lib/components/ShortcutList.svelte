@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { inTauri } from '$lib/native';
+  import { inApp } from '$lib/native';
   import { session } from '$lib/stores/session.svelte';
   import { describeShortcuts, isMacPlatform } from '$lib/util/shortcuts';
 
   /** The shortcut list, straight from the registry the keyboard handler uses. */
-  const groups = $derived(describeShortcuts({ books: session.library?.mediaType !== 'podcast', desktop: inTauri, mac: isMacPlatform() }));
+  const groups = $derived(describeShortcuts({ books: session.library?.mediaType !== 'podcast', desktop: inApp, mac: isMacPlatform() }));
 </script>
 
 <div class="groups">

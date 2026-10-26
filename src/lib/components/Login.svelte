@@ -123,7 +123,7 @@
 <svelte:head><title>{pageTitle(session.addingAccount ? 'Add an account' : 'Sign in')}</title></svelte:head>
 
 <div class="login">
-  <div class="drag" data-tauri-drag-region></div>
+  <div class="drag" data-drag-region></div>
   <section class="welcome" aria-hidden="true">
     <div class="shelf">
       {#each spines as s, i (i)}

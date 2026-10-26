@@ -376,3 +376,14 @@ img {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Parts of the window you can drag it by. The browser takes the title bar's role away, so the page names them. Anything
+   you can click inside one stays clickable. */
+[data-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+[data-drag-region] :is(button, a, input, select, textarea, label, summary, [role='button'], [role='slider'], [role='menu'], [data-no-drag]) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

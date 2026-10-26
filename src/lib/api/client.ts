@@ -1,12 +1,13 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
-import { inTauri, secrets } from '$lib/native';
+import { fetch as appFetch } from '$lib/ipc';
+import { LOOPBACK_REDIRECT_URI, SCHEME_REDIRECT_URIS } from '../../shared/oauth';
+import { inApp, secrets } from '$lib/native';
 import { toast } from '$lib/stores/toast.svelte';
 import type { User } from './types';
 
-// Requests go through the Rust HTTP client: Audiobookshelf answers CORS preflights
-// with 401, so the webview's own fetch can't reach most servers.
-// In a plain browser (vite dev without Tauri), the dev server relays requests instead; see vite.config.js.
-const httpFetch: typeof fetch = inTauri ? (tauriFetch as typeof fetch) : (input, init) => fetch(`/__abs_proxy?url=${encodeURIComponent(String(input))}`, init);
+// Requests go through the Bun process (src/bun/http.ts): Audiobookshelf answers CORS preflights
+// with 401, so the page's own fetch can't reach most servers.
+// In a plain browser (vite dev outside the app), the dev server relays requests instead; see vite.config.js.
+const httpFetch: typeof fetch = inApp ? (appFetch as typeof fetch) : (input, init) => fetch(`/__abs_proxy?url=${encodeURIComponent(String(input))}`, init);
 
 export type AuthMethod = 'password' | 'apikey' | 'openid';
 
@@ -738,10 +739,14 @@ async function signedInAgain(accountId: string, fresh: Omit<Account, 'id'>) {
 // signs in at their identity provider in the browser, and the server hands the result back to us through a deep link.
 
 /**
- * Where the server sends the browser back to. `audiobookshelf://oauth` is allowed by default on every server (it's the
- * mobile app's); `lectern://oauth` is for servers whose admin removed that or prefers to name us.
+ * Where the server sends the browser back to, in the order to try them. `audiobookshelf://oauth` is allowed by default
+ * on every server (it's the mobile app's); `lectern://oauth` is for servers whose admin removed that or prefers to name
+ * us. Only macOS can receive those links; elsewhere the app listens on a loopback address, which an admin has to allow.
  */
-export const OPENID_REDIRECT_URIS = ['audiobookshelf://oauth', 'lectern://oauth'] as const;
+export function openIdRedirectUris(): readonly string[] {
+  const platform = typeof window === 'undefined' ? undefined : window.__lectern?.platform;
+  return platform && platform !== 'darwin' ? [LOOPBACK_REDIRECT_URI] : [...SCHEME_REDIRECT_URIS, LOOPBACK_REDIRECT_URI];
+}
 
 /** A sign-on waiting for the browser. Holds secrets: keep it in memory only. */
 export interface OpenIdPending {
@@ -814,7 +819,7 @@ export function parseOpenIdCallback(pending: Pick<OpenIdPending, 'redirectUri' |
  * browser comes back with to `completeOpenIdLogin` (or `reauthenticateWithOpenId`).
  */
 export async function beginOpenIdLogin(serverUrl: string): Promise<OpenIdPending> {
-  for (const redirectUri of OPENID_REDIRECT_URIS) {
+  for (const redirectUri of openIdRedirectUris()) {
     const verifier = randomToken();
     const state = randomToken(16);
     const url = new URL(`${serverUrl}/auth/openid`);
@@ -850,9 +855,10 @@ export async function beginOpenIdLogin(serverUrl: string): Promise<OpenIdPending
     }
     return { serverUrl, authorizeUrl: authorizeUrl.toString(), redirectUri, state, verifier, cookie: res.cookie };
   }
+  const ask = openIdRedirectUris().includes(SCHEME_REDIRECT_URIS[0]) ? `add lectern://oauth (or audiobookshelf://oauth)` : `add ${LOOPBACK_REDIRECT_URI}`;
   throw new ApiError(
     400,
-    `${serverUrl} doesn’t let desktop apps finish single sign-on. Ask your server admin to add lectern://oauth (or audiobookshelf://oauth) under Settings → Authentication → Allowed Mobile Redirect URIs.`
+    `${serverUrl} doesn’t let desktop apps finish single sign-on. Ask your server admin to ${ask} under Settings → Authentication → Allowed Mobile Redirect URIs.`
   );
 }
 

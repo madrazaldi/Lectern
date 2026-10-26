@@ -1,11 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'svelte';
-import { LogicalSize, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 
-/** Enough of a Tauri window to switch modes: records calls, keeps position/size/maximized/fullscreen. */
+/** Enough of the app's window to switch modes: records calls, keeps position/size/maximized/fullscreen (in points). */
 function fakeWindow(init: { x?: number; y?: number; width?: number; height?: number; maximized?: boolean; fullscreen?: boolean } = {}) {
-  const state = { x: 100, y: 80, width: 2640, height: 1720, maximized: false, fullscreen: false, ...init };
+  const state = { x: 100, y: 80, width: 1320, height: 860, maximized: false, fullscreen: false, ...init };
   const calls: string[] = [];
   const ok =
     (name: string, fn: (...args: never[]) => void = () => {}) =>
@@ -15,42 +14,39 @@ function fakeWindow(init: { x?: number; y?: number; width?: number; height?: num
       return Promise.resolve();
     };
   const win = {
-    state,
+    state: vi.fn(async () => ({ ...state })),
+    stateValues: state,
     calls,
-    isFullscreen: vi.fn(async () => state.fullscreen),
-    isMaximized: vi.fn(async () => state.maximized),
-    outerPosition: vi.fn(async () => new PhysicalPosition(state.x, state.y)),
-    innerSize: vi.fn(async () => new PhysicalSize(state.width, state.height)),
     setFullscreen: vi.fn(ok('setFullscreen', (on: boolean) => (state.fullscreen = on))),
     unmaximize: vi.fn(ok('unmaximize', () => (state.maximized = false))),
     maximize: vi.fn(ok('maximize', () => (state.maximized = true))),
     setAlwaysOnTop: vi.fn(ok('setAlwaysOnTop')),
     setResizable: vi.fn(ok('setResizable')),
     setDecorations: vi.fn(ok('setDecorations')),
-    setTitleBarStyle: vi.fn(ok('setTitleBarStyle')),
     setMinSize: vi.fn(ok('setMinSize')),
     setSize: vi.fn(ok('setSize')),
-    setPosition: vi.fn(ok('setPosition', (p: PhysicalPosition) => Object.assign(state, { x: p.x, y: p.y }))),
-    center: vi.fn(ok('center'))
+    setPosition: vi.fn(ok('setPosition', (p: { x: number; y: number }) => Object.assign(state, { x: p.x, y: p.y }))),
+    center: vi.fn(ok('center')),
+    close: vi.fn(ok('close'))
   };
   return win;
 }
 
 const env = vi.hoisted(() => ({
   win: null as unknown,
-  // One 3456×2234 display at the origin.
-  monitors: [{ position: { x: 0, y: 0 }, size: { width: 3456, height: 2234 } }] as unknown[]
+  // One 1728×1117 display at the origin.
+  displays: [{ x: 0, y: 0, width: 1728, height: 1117 }] as unknown[]
 }));
 
 vi.mock('$lib/native', () => ({ appWindow: () => env.win }));
-vi.mock('@tauri-apps/api/window', () => ({ availableMonitors: async () => env.monitors }));
+vi.mock('$lib/ipc', () => ({ availableDisplays: async () => env.displays }));
 
 const { mini, onScreen, MINI_SIZE, FULL_MIN_SIZE, FULL_DEFAULT_SIZE } = await import('./miniMode');
 const { prefs } = await import('$lib/stores/prefs.svelte');
 
 beforeEach(() => {
   Object.assign(prefs, { miniMode: false, miniPinned: true, miniRestore: null, miniPosition: null });
-  env.monitors = [{ position: { x: 0, y: 0 }, size: { width: 3456, height: 2234 } }];
+  env.displays = [{ x: 0, y: 0, width: 1728, height: 1117 }];
   env.win = null;
 });
 
@@ -65,12 +61,12 @@ describe('entering the mini player', () => {
     await mini.enter();
 
     expect(prefs.miniMode).toBe(true);
-    expect(prefs.miniRestore).toEqual({ x: 100, y: 80, width: 2640, height: 1720, maximized: false, fullscreen: false });
+    expect(prefs.miniRestore).toEqual({ x: 100, y: 80, width: 1320, height: 860, maximized: false, fullscreen: false });
     expect(win.setAlwaysOnTop).toHaveBeenCalledWith(true);
     expect(win.setResizable).toHaveBeenCalledWith(false);
     expect(win.setDecorations).toHaveBeenCalledWith(false);
     expect(win.setMinSize).toHaveBeenCalledWith(null);
-    expect(win.setSize).toHaveBeenCalledWith(new LogicalSize(MINI_SIZE.width, MINI_SIZE.height));
+    expect(win.setSize).toHaveBeenCalledWith(MINI_SIZE);
     // The minimum size goes before the resize, or the window couldn't get that small.
     expect(win.calls.indexOf('setMinSize')).toBeLessThan(win.calls.indexOf('setSize'));
     // Nowhere saved yet: it shrinks where it is.
@@ -86,14 +82,14 @@ describe('entering the mini player', () => {
   });
 
   it('goes back to where the mini player was last put', async () => {
-    prefs.miniPosition = { x: 3000, y: 60 };
+    prefs.miniPosition = { x: 1500, y: 60 };
     const win = use(fakeWindow());
     await mini.enter();
-    expect(win.setPosition).toHaveBeenCalledWith(new PhysicalPosition(3000, 60));
+    expect(win.setPosition).toHaveBeenCalledWith({ x: 1500, y: 60 });
   });
 
   it("stays put when the mini player's last place is on a display that's gone", async () => {
-    prefs.miniPosition = { x: 5000, y: 60 };
+    prefs.miniPosition = { x: 3000, y: 60 };
     const win = use(fakeWindow());
     await mini.enter();
     expect(win.setPosition).not.toHaveBeenCalled();
@@ -119,7 +115,7 @@ describe('entering the mini player', () => {
     use(fakeWindow());
     await mini.enter();
     flushSync();
-    expect(JSON.parse(localStorage.getItem('lectern.prefs')!)).toMatchObject({ miniMode: true, miniRestore: { width: 2640, height: 1720 } });
+    expect(JSON.parse(localStorage.getItem('lectern.prefs')!)).toMatchObject({ miniMode: true, miniRestore: { width: 1320, height: 860 } });
   });
 });
 
@@ -127,20 +123,20 @@ describe('leaving the mini player', () => {
   it('returns to the exact size and place, with the frame and minimum size back', async () => {
     const win = use(fakeWindow());
     await mini.enter();
-    win.state.x = 2900;
-    win.state.y = 40;
+    win.stateValues.x = 1400;
+    win.stateValues.y = 40;
     win.calls.length = 0;
     await mini.exit();
 
     expect(prefs.miniMode).toBe(false);
     expect(prefs.miniRestore).toBeNull();
-    expect(prefs.miniPosition).toEqual({ x: 2900, y: 40 });
+    expect(prefs.miniPosition).toEqual({ x: 1400, y: 40 });
     expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(false);
     expect(win.setResizable).toHaveBeenLastCalledWith(true);
     expect(win.setDecorations).toHaveBeenLastCalledWith(true);
-    expect(win.setSize).toHaveBeenLastCalledWith(new PhysicalSize(2640, 1720));
-    expect(win.setPosition).toHaveBeenLastCalledWith(new PhysicalPosition(100, 80));
-    expect(win.setMinSize).toHaveBeenLastCalledWith(new LogicalSize(FULL_MIN_SIZE.width, FULL_MIN_SIZE.height));
+    expect(win.setSize).toHaveBeenLastCalledWith({ width: 1320, height: 860 });
+    expect(win.setPosition).toHaveBeenLastCalledWith({ x: 100, y: 80 });
+    expect(win.setMinSize).toHaveBeenLastCalledWith(FULL_MIN_SIZE);
     // The size goes back before the minimum does, so the minimum can't stretch the small window first.
     expect(win.calls.indexOf('setSize')).toBeLessThan(win.calls.indexOf('setMinSize'));
     expect(win.maximize).not.toHaveBeenCalled();
@@ -158,10 +154,10 @@ describe('leaving the mini player', () => {
 
   it("centres the window when its old place is on a display that's gone", async () => {
     prefs.miniMode = true;
-    prefs.miniRestore = { x: 4000, y: 100, width: 2000, height: 1300, maximized: false, fullscreen: false };
+    prefs.miniRestore = { x: 3000, y: 100, width: 2000, height: 1300, maximized: false, fullscreen: false };
     const win = use(fakeWindow());
     await mini.exit();
-    expect(win.setSize).toHaveBeenCalledWith(new PhysicalSize(2000, 1300));
+    expect(win.setSize).toHaveBeenCalledWith({ width: 2000, height: 1300 });
     expect(win.setPosition).not.toHaveBeenCalled();
     expect(win.center).toHaveBeenCalled();
   });
@@ -170,7 +166,7 @@ describe('leaving the mini player', () => {
     prefs.miniMode = true;
     const win = use(fakeWindow());
     await mini.exit();
-    expect(win.setSize).toHaveBeenCalledWith(new LogicalSize(FULL_DEFAULT_SIZE.width, FULL_DEFAULT_SIZE.height));
+    expect(win.setSize).toHaveBeenCalledWith(FULL_DEFAULT_SIZE);
     expect(win.center).toHaveBeenCalled();
     expect(prefs.miniMode).toBe(false);
   });
@@ -182,17 +178,18 @@ describe('launching', () => {
     Object.assign(prefs, { miniMode: true, miniRestore: saved, miniPosition: { x: 50, y: 60 } });
     const win = use(fakeWindow());
     await mini.restore();
-    expect(win.setSize).toHaveBeenCalledWith(new LogicalSize(MINI_SIZE.width, MINI_SIZE.height));
+    expect(win.setSize).toHaveBeenCalledWith(MINI_SIZE);
     expect(win.setDecorations).toHaveBeenCalledWith(false);
-    // The window-state plugin already put it where it was.
+    // The main process already put it where it was.
     expect(win.setPosition).not.toHaveBeenCalled();
     expect(prefs.miniRestore).toEqual(saved);
   });
 
-  it('leaves a full-size window alone', async () => {
+  it('leaves a full-size window alone, apart from making sure its minimum size is back', async () => {
     const win = use(fakeWindow());
     await mini.restore();
-    expect(win.calls).toEqual([]);
+    expect(win.calls).toEqual(['setMinSize']);
+    expect(win.setMinSize).toHaveBeenCalledWith(FULL_MIN_SIZE);
   });
 });
 

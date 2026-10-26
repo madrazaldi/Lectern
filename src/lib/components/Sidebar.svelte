@@ -2,7 +2,7 @@
   import { ArrowDownToLine, BookOpen, ChartNoAxesColumn, CloudOff, Feather, House, LibraryBig, ListMusic, Mic, Settings, Shapes } from '@lucide/svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { inTauri } from '$lib/native';
+  import { inApp } from '$lib/native';
   import { downloads } from '$lib/stores/downloads.svelte';
   import { session } from '$lib/stores/session.svelte';
 
@@ -33,7 +33,7 @@
 </script>
 
 <nav class="sidebar" aria-label="Main">
-  <div class="top" data-tauri-drag-region></div>
+  <div class="top" data-drag-region></div>
   <a class="mark" href="/" aria-label="Lectern home">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M4 6.5c2.8-1.6 5.5-1.6 8 0 2.5-1.6 5.2-1.6 8 0V18c-2.8-1.4-5.5-1.4-8 0-2.5-1.4-5.2-1.4-8 0V6.5Z" fill="var(--accent)" />
@@ -69,7 +69,7 @@
         Listening
       </a>
     </li>
-    {#if inTauri}
+    {#if inApp}
       <li>
         <a href="/downloads" class:on={active('/downloads')} aria-current={active('/downloads') ? 'page' : undefined}>
           <ArrowDownToLine size={18} strokeWidth={1.8} />

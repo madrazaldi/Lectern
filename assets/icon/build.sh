@@ -4,7 +4,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-icons="$root/src-tauri/icons"
+icons="$root/assets/icons"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -14,27 +14,16 @@ for s in 16 32 128 256 512; do
 done
 for s in 24 48 64; do set -- "$@" "$s:$tmp/ico-$s.png"; done
 swift "$here/render.swift" "$here/lectern-icon.svg" "$@" \
-  32:"$icons/32x32.png" \
-  128:"$icons/128x128.png" \
-  256:"$icons/128x128@2x.png" \
   512:"$icons/icon.png" \
-  30:"$icons/Square30x30Logo.png" \
-  44:"$icons/Square44x44Logo.png" \
-  71:"$icons/Square71x71Logo.png" \
-  89:"$icons/Square89x89Logo.png" \
-  107:"$icons/Square107x107Logo.png" \
-  142:"$icons/Square142x142Logo.png" \
-  150:"$icons/Square150x150Logo.png" \
-  284:"$icons/Square284x284Logo.png" \
-  310:"$icons/Square310x310Logo.png" \
-  50:"$icons/StoreLogo.png" \
   128:"$root/static/favicon.png"
 
-mkdir "$tmp/icon.iconset"
-mv "$tmp"/icon_*.png "$tmp/icon.iconset/"
-iconutil -c icns "$tmp/icon.iconset" -o "$icons/icon.icns"
+# Electrobun takes the macOS icon as an .iconset folder (it makes the .icns itself); the .icns is for everything else.
+rm -rf "$icons/icon.iconset"
+mkdir "$icons/icon.iconset"
+cp "$tmp"/icon_*.png "$icons/icon.iconset/"
+iconutil -c icns "$icons/icon.iconset" -o "$icons/icon.icns"
 
-i="$tmp/icon.iconset"
+i="$icons/icon.iconset"
 python3 "$here/make_ico.py" "$icons/icon.ico" \
   "$i/icon_16x16.png" "$tmp/ico-24.png" "$i/icon_32x32.png" \
   "$tmp/ico-48.png" "$tmp/ico-64.png" "$i/icon_256x256.png"

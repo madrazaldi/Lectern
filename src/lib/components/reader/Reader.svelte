@@ -1,9 +1,9 @@
 <script lang="ts">
   import { ArrowLeft, ChevronLeft, ChevronRight, TableOfContents, X } from '@lucide/svelte';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openUrl } from '$lib/ipc';
   import { onMount, tick } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
-  import { inTauri } from '$lib/native';
+  import { inApp } from '$lib/native';
   import { player } from '$lib/stores/player.svelte';
   import { prefs } from '$lib/stores/prefs.svelte';
   import { contextMenu } from '$lib/util/contextMenu.svelte';
@@ -93,7 +93,7 @@
 
   function follow(href: string) {
     if (!/^(https?|mailto):/i.test(href)) return move((v) => v.follow(href));
-    if (inTauri) void openUrl(href).catch(() => {});
+    if (inApp) void openUrl(href).catch(() => {});
     else window.open(href, '_blank', 'noopener,noreferrer');
   }
 
@@ -167,9 +167,9 @@
   style:--text-3={palette.ink3}
   style:color-scheme={palette.scheme}
 >
-  <header class="bar" data-tauri-drag-region>
+  <header class="bar" data-drag-region>
     <button class="icon-btn" onclick={onclose} aria-label="Close the book" title="Close (Esc)"><ArrowLeft size={18} /></button>
-    <div class="titles" data-tauri-drag-region>
+    <div class="titles" data-drag-region>
       <h1 class="serif">{title}</h1>
       {#if chapter}<p class="chapter">{chapter}</p>{/if}
     </div>

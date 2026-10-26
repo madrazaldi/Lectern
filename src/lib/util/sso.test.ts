@@ -8,7 +8,7 @@ const native = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/native', () => ({
-  inTauri: true,
+  inApp: true,
   secrets: { get: async () => null, set: async () => {}, delete: async () => {} },
   onDeepLink: async (fn: (urls: string[]) => void) => {
     native.deliver = fn;

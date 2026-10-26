@@ -1,7 +1,7 @@
 <script lang="ts">
   import { RotateCw } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
-  import { inTauri } from '$lib/native';
+  import { inApp } from '$lib/native';
   import { session } from '$lib/stores/session.svelte';
   import { isUnreachable } from '$lib/util/errors';
   import EmptyState from './EmptyState.svelte';
@@ -38,7 +38,7 @@
   <EmptyState title={offline ? "You're offline" : title}>
     {#if offline}
       <p>
-        This needs your server, which can't be reached right now.{#if inTauri}
+        This needs your server, which can't be reached right now.{#if inApp}
           Downloaded titles still play.{/if}
       </p>
     {:else if message}
@@ -49,7 +49,7 @@
       {#if onretry}
         <button class="btn btn-primary" onclick={retry} disabled={retrying}><RotateCw size={15} class={retrying ? 'spin' : ''} /> Try again</button>
       {/if}
-      {#if offline && inTauri}<a class="btn btn-quiet" href="/downloads">Go to Downloads</a>{/if}
+      {#if offline && inApp}<a class="btn btn-quiet" href="/downloads">Go to Downloads</a>{/if}
     </div>
   </EmptyState>
 </div>

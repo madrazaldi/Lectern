@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AudioFile, LibraryItem } from '$lib/api/types';
 
-vi.mock('$lib/native', () => ({ inTauri: true, call: vi.fn(), on: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock('$lib/native', () => ({ inApp: true, call: vi.fn(), on: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock('$lib/api/abs', () => ({ getItem: vi.fn() }));
 vi.mock('$lib/api/client', () => ({
   getCredentials: vi.fn(),
